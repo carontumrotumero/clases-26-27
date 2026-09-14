@@ -9,6 +9,8 @@ import {
   COURSE_END,
 } from "./schedule-data.js";
 
+function boot() {
+
 // ----------------------------------------------------------------------------
 // Utilidades de fecha
 // ----------------------------------------------------------------------------
@@ -460,5 +462,64 @@ if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("./sw.js").catch(() => {});
   });
 }
+  render();
+}
 
-render();
+
+// ----------------------------------------------------------------------------
+// Bloqueo con contraseña (solo un filtro básico: al ser una web estática,
+// el hash es visible en el código fuente, así que no sustituye a una
+// autenticación real, pero evita que se vea el horario a simple vista)
+// ----------------------------------------------------------------------------
+const LS_UNLOCKED = "horario:unlocked";
+const PASSWORD_HASH = "18ee924cb67c6f6550c06fe2fa14a2e427d2c239c55c19d89de5cd5ffaa59030";
+
+async function sha256Hex(text) {
+  const enc = new TextEncoder().encode(text);
+  const buf = await crypto.subtle.digest("SHA-256", enc);
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function isUnlocked() {
+  return localStorage.getItem(LS_UNLOCKED) === "1";
+}
+
+function showApp() {
+  document.getElementById("lockScreen").hidden = true;
+  document.getElementById("app").hidden = false;
+  boot();
+}
+
+function initLock() {
+  const lockIconEl = document.getElementById("lockIcon");
+  if (lockIconEl) lockIconEl.innerHTML = ICONS["lock-keyhole"];
+
+  if (isUnlocked()) {
+    showApp();
+    return;
+  }
+
+  document.getElementById("lockScreen").hidden = false;
+  document.getElementById("app").hidden = true;
+
+  const form = document.getElementById("lockForm");
+  const input = document.getElementById("lockInput");
+  const error = document.getElementById("lockError");
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const hash = await sha256Hex(input.value);
+    if (hash === PASSWORD_HASH) {
+      error.hidden = true;
+      localStorage.setItem(LS_UNLOCKED, "1");
+      showApp();
+    } else {
+      error.hidden = false;
+      input.value = "";
+      input.focus();
+    }
+  });
+  input.focus();
+}
+
+initLock();

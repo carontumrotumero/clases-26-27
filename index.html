@@ -12,6 +12,20 @@
   <link rel="stylesheet" href="assets/style.css" />
 </head>
 <body>
+  <div id="lockScreen" class="lock-screen">
+    <div class="lock-card">
+      <div class="lock-icon" id="lockIcon"></div>
+      <h1>Horario de clase</h1>
+      <p>Introduce la contraseña que te ha dado tu compañero para ver el horario.</p>
+      <form id="lockForm" autocomplete="off">
+        <input type="password" id="lockInput" placeholder="Contraseña" autocomplete="current-password" />
+        <button type="submit" class="btn primary">Entrar</button>
+      </form>
+      <p class="lock-error" id="lockError" hidden>Contraseña incorrecta.</p>
+    </div>
+  </div>
+
+  <div id="app" hidden>
   <header class="top">
     <div class="top-row">
       <div class="brand">
@@ -47,6 +61,7 @@
   </div>
 
   <div class="toast" id="toast"></div>
+  </div>
 
   <script type="module" src="assets/app.js"></script>
 </body>
