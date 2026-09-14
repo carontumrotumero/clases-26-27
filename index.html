@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Mi Horario de Clase</title>
+  <meta name="description" content="Horario semanal de clase con festivos, avisos de días sin asistir y tareas pendientes." />
+  <meta name="theme-color" content="#101216" />
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet" />
+  <link rel="icon" href="data:," />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="top-row">
+      <div class="brand">
+        <span class="icon" id="brandIcon"></span>
+        <span>Mi Horario</span>
+      </div>
+      <div class="header-actions">
+        <button class="icon-btn" id="notifBtn" title="Notificaciones" aria-label="Notificaciones"></button>
+        <button class="icon-btn" id="themeBtn" title="Cambiar tema" aria-label="Cambiar tema"></button>
+      </div>
+    </div>
+    <div class="week-nav">
+      <button class="icon-btn" id="prevWeek" aria-label="Semana anterior"></button>
+      <div class="week-label" id="weekLabel"></div>
+      <button class="icon-btn" id="nextWeek" aria-label="Semana siguiente"></button>
+    </div>
+  </header>
+
+  <div class="day-tabs" id="dayTabs"></div>
+
+  <div class="wrap">
+    <main id="dayContent"></main>
+
+    <section class="tasks">
+      <h2 class="section-heading"><span id="tasksIcon"></span>Tareas a entregar</h2>
+      <div id="taskList"></div>
+    </section>
+
+    <footer class="credits">
+      Horario personal · festivos según el calendario escolar de Almería 2026‑2027<br />
+      Iconos de <a href="https://github.com/dqev/reicon" target="_blank" rel="noopener">reicon</a> (MIT)
+    </footer>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script type="module" src="assets/app.js"></script>
+</body>
+</html>

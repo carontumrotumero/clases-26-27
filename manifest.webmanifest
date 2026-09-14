@@ -1,0 +1,10 @@
+{
+  "name": "Mi Horario de Clase",
+  "short_name": "Horario",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#101216",
+  "theme_color": "#101216",
+  "icons": []
+}
