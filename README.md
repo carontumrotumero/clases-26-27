@@ -1,9 +1,9 @@
 # Mi Horario de Clase
 
-Web estática con el horario semanal de clase (SMR), festivos del calendario
-escolar de Almería 2026‑2027, botón para marcar días a los que no puedes
-asistir, avisos por notificación del navegador y una sección de tareas a
-entregar.
+Web con el horario semanal de clase (SMR), festivos del calendario escolar
+de Almería 2026‑2027, avisos de falta y tareas a entregar **en tiempo real y
+compartidos por toda la clase** (base de datos Supabase), y notificaciones
+del navegador.
 
 ## Ver la web
 
@@ -36,22 +36,25 @@ de la nueva contraseña y sustituye el valor de `PASSWORD_HASH` en
 echo -n "TuNuevaContraseña" | shasum -a 256
 ```
 
-## Cómo añadir una tarea a entregar
+## Avisos de falta y tareas (base de datos en tiempo real)
 
-Edita `assets/schedule-data.js`, dentro del array `TASKS`, y añade una línea
-así:
+Ya no se editan en el código. Directamente en la web:
 
-```js
-{ subject: "Aplicaciones Web", title: "Práctica 3 - Formularios", due: "2026-09-22T23:59", link: "https://classroom.google.com/..." },
-```
+- En cualquier día, el botón **"Avisar que no voy"** abre un formulario
+  (nombre + motivo opcional) que se guarda al momento y lo ve toda la clase,
+  sin recargar la página.
+- En "Tareas a entregar", el botón **"+"** abre un formulario (asignatura,
+  título, fecha/hora límite y enlace opcional) que también aparece al
+  instante para todos.
+- Cada aviso o tarea solo se puede borrar desde el mismo navegador que lo
+  creó (se identifica con un token propio guardado en tu dispositivo, nunca
+  con tu nombre); nadie más ve el botón de borrar en tus entradas.
 
-- `subject`: debe coincidir con el nombre exacto de una asignatura del horario
-  para heredar su color.
-- `due`: fecha y hora límite en formato `AAAA-MM-DDTHH:MM`.
-- `link`: enlace de entrega (opcional, puedes quitar la propiedad).
-
-Guarda, haz commit y `git push`: en cuanto GitHub Pages actualice el sitio
-(1-2 minutos) lo verá toda la clase.
+Esto usa [Supabase](https://supabase.com) (plan gratuito) como base de
+datos en tiempo real — la conexión está en `assets/db.js`. Como no hay login
+por alumno, cualquiera con la contraseña de la web puede leer y añadir
+entradas; es una protección pensada para una clase de confianza, no para
+datos sensibles.
 
 ## Cómo cambiar el horario o añadir un festivo
 
@@ -62,11 +65,8 @@ Todo está en `assets/schedule-data.js`:
   15 de septiembre, que empieza a las 13:00).
 - `HOLIDAYS`: festivos y días no lectivos del calendario escolar.
 
-## Sobre el botón "No voy este día" y las notificaciones
+## Sobre las notificaciones
 
-- El botón "No voy este día" guarda tu elección **solo en tu navegador**
-  (localStorage), así que es personal de cada alumno: no afecta a lo que ven
-  tus compañeros.
 - Al pulsar el icono de la campana el navegador (Chrome, Safari, Edge,
   Firefox...) te pedirá permiso para mostrar notificaciones. Si lo aceptas,
   la web te avisará ~10 minutos antes de cada clase del día **mientras

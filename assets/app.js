@@ -4,15 +4,25 @@ import {
   SUBJECT_COLORS,
   SCHEDULE_EXCEPTIONS,
   HOLIDAY_MAP,
-  TASKS,
   COURSE_START,
   COURSE_END,
 } from "./schedule-data.js";
+import {
+  isOwn,
+  fetchAbsences,
+  addAbsence,
+  deleteAbsence,
+  subscribeAbsences,
+  fetchTasks,
+  addTask,
+  deleteTask,
+  subscribeTasks,
+} from "./db.js";
 
 function boot() {
 
 // ----------------------------------------------------------------------------
-// Utilidades de fecha
+// Utilidades
 // ----------------------------------------------------------------------------
 const DAY_NAMES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 const DAY_SHORT = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
@@ -56,10 +66,26 @@ function timeToMinutes(t) {
   return h * 60 + m;
 }
 
+function escapeHtml(str) {
+  return String(str ?? "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[ch]));
+}
+
+function sanitizeUrl(url) {
+  if (!url) return null;
+  try {
+    const u = new URL(url, location.href);
+    if (u.protocol === "http:" || u.protocol === "https:") return u.href;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 // ----------------------------------------------------------------------------
-// Estado persistente (localStorage) — es personal de cada navegador/alumno
+// Estado persistente (localStorage) — preferencias personales de este navegador
 // ----------------------------------------------------------------------------
-const LS_SKIPPED = "horario:skippedDates";
 const LS_THEME = "horario:theme";
 const LS_NOTIF_PREF = "horario:notifPref";
 const LS_NOTIFIED_KEYS = "horario:notifiedKeys";
@@ -75,8 +101,69 @@ function saveSet(key, set) {
   localStorage.setItem(key, JSON.stringify([...set]));
 }
 
-let skippedDates = loadSet(LS_SKIPPED);
 let notifiedKeys = loadSet(LS_NOTIFIED_KEYS);
+
+// ----------------------------------------------------------------------------
+// Estado en vivo (Supabase) — compartido por toda la clase en tiempo real
+// ----------------------------------------------------------------------------
+let absencesByDate = {}; // { "2026-09-21": [ {id, student_name, reason, owner_token, ...}, ... ] }
+let tasksList = [];
+
+function groupAbsences(rows) {
+  const map = {};
+  rows.forEach((row) => {
+    (map[row.class_date] ??= []).push(row);
+  });
+  return map;
+}
+
+function applyAbsenceChange(payload) {
+  if (payload.eventType === "INSERT") {
+    const row = payload.new;
+    const arr = (absencesByDate[row.class_date] ??= []);
+    if (!arr.some((a) => a.id === row.id)) arr.push(row);
+  } else if (payload.eventType === "DELETE") {
+    const row = payload.old;
+    const arr = absencesByDate[row.class_date];
+    if (arr) absencesByDate[row.class_date] = arr.filter((a) => a.id !== row.id);
+  } else if (payload.eventType === "UPDATE") {
+    const row = payload.new;
+    const arr = absencesByDate[row.class_date];
+    if (arr) {
+      const idx = arr.findIndex((a) => a.id === row.id);
+      if (idx >= 0) arr[idx] = row;
+    }
+  }
+}
+
+function applyTaskChange(payload) {
+  if (payload.eventType === "INSERT") {
+    if (!tasksList.some((t) => t.id === payload.new.id)) tasksList.push(payload.new);
+  } else if (payload.eventType === "DELETE") {
+    tasksList = tasksList.filter((t) => t.id !== payload.old.id);
+  } else if (payload.eventType === "UPDATE") {
+    const idx = tasksList.findIndex((t) => t.id === payload.new.id);
+    if (idx >= 0) tasksList[idx] = payload.new;
+  }
+}
+
+async function loadAndSubscribe() {
+  const [absences, tasks] = await Promise.all([fetchAbsences(), fetchTasks()]);
+  absencesByDate = groupAbsences(absences);
+  tasksList = tasks;
+  render();
+
+  subscribeAbsences((payload) => {
+    applyAbsenceChange(payload);
+    render();
+  });
+  subscribeTasks((payload) => {
+    applyTaskChange(payload);
+    renderTasks();
+  });
+
+  if (localStorage.getItem(LS_NOTIF_PREF) === "on") scheduleTodayReminders();
+}
 
 // ----------------------------------------------------------------------------
 // Tema (claro / oscuro / automático)
@@ -149,7 +236,7 @@ async function requestNotifPermission() {
   }
   if (Notification.permission === "granted") {
     new Notification("🔔 Notificaciones activadas", {
-      body: "Te avisaré de tus clases y de los cambios de día mientras esta pestaña esté abierta.",
+      body: "Te avisaré de tus clases mientras esta pestaña esté abierta.",
     });
     return;
   }
@@ -183,9 +270,10 @@ function notify(title, body) {
 document.getElementById("notifBtn").addEventListener("click", requestNotifPermission);
 renderNotifIcon();
 
-// Programa un aviso ~10 min antes de cada clase de HOY que no se haya saltado,
-// mientras la pestaña siga abierta (las notificaciones reales tras cerrar el
-// navegador requerirían un servidor push, que esta web estática no tiene).
+// Programa un aviso ~10 min antes de cada clase de HOY (si no has avisado que
+// faltas), mientras la pestaña siga abierta. Las notificaciones reales tras
+// cerrar el navegador requerirían un servidor push, que esta web estática no
+// tiene.
 const REMINDER_LEAD_MIN = 10;
 function scheduleTodayReminders() {
   if (!notifSupported() || Notification.permission !== "granted") return;
@@ -194,7 +282,8 @@ function scheduleTodayReminders() {
   if (HOLIDAY_MAP[iso] || iso < COURSE_START || iso > COURSE_END) return;
   const weekday = now.getDay();
   if (weekday === 0 || weekday === 6) return;
-  if (skippedDates.has(iso)) return;
+  const iAmOut = (absencesByDate[iso] || []).some((a) => isOwn(a));
+  if (iAmOut) return;
 
   const exception = SCHEDULE_EXCEPTIONS[iso];
   const classes = (WEEK_SCHEDULE[weekday] || []).filter((c) => {
@@ -217,7 +306,6 @@ function scheduleTodayReminders() {
     }, delay);
   });
 }
-if (localStorage.getItem(LS_NOTIF_PREF) === "on") scheduleTodayReminders();
 
 // ----------------------------------------------------------------------------
 // Toast
@@ -279,14 +367,15 @@ function render() {
   dates.forEach((date, i) => {
     const iso = toISO(date);
     const isHoliday = !!HOLIDAY_MAP[iso];
-    const isSkipped = skippedDates.has(iso);
+    const absenceCount = (absencesByDate[iso] || []).length;
     const btn = document.createElement("button");
     btn.className = "day-tab";
     if (i === selectedDayIndex) btn.classList.add("active");
     if (isHoliday) btn.classList.add("is-holiday");
-    if (isSkipped && !isHoliday) btn.classList.add("is-skipped");
     if (iso === todayISO) btn.classList.add("is-today");
-    btn.innerHTML = `${DAY_SHORT[date.getDay()]}<span class="sub">${fmtShort(date)}</span>`;
+    btn.innerHTML = `${DAY_SHORT[date.getDay()]}<span class="sub">${fmtShort(date)}</span>${
+      absenceCount > 0 && !isHoliday ? `<span class="absence-count">${absenceCount}</span>` : ""
+    }`;
     btn.addEventListener("click", () => {
       selectedDayIndex = i;
       render();
@@ -309,7 +398,6 @@ function renderDay(date) {
 
   const holidayLabel = HOLIDAY_MAP[iso];
   const exception = SCHEDULE_EXCEPTIONS[iso];
-  const isSkipped = skippedDates.has(iso);
   const beforeCourseStart = iso < COURSE_START;
   const afterCourseEnd = iso > COURSE_END;
 
@@ -343,13 +431,6 @@ function renderDay(date) {
     content.appendChild(banner);
   }
 
-  if (isSkipped) {
-    const banner = document.createElement("div");
-    banner.className = "day-banner exception";
-    banner.innerHTML = `${ICONS["x-circle"]}<div><strong>Marcaste que no vas este día.</strong> Las clases se muestran tachadas de referencia.</div>`;
-    content.appendChild(banner);
-  }
-
   let classes = WEEK_SCHEDULE[weekday] || [];
   if (exception && exception.onlyFrom) {
     classes = classes.filter((c) => timeToMinutes(c.end) > timeToMinutes(exception.onlyFrom));
@@ -365,7 +446,7 @@ function renderDay(date) {
     list.className = "class-list";
     classes.forEach((c) => {
       const card = document.createElement("div");
-      card.className = "class-card" + (isSkipped ? " skipped" : "");
+      card.className = "class-card";
       card.style.setProperty("--subject-color", SUBJECT_COLORS[c.subject] || "");
       card.innerHTML = `
         <div class="class-time"><span class="start">${c.start}</span><span class="end">${c.end}</span></div>
@@ -378,41 +459,116 @@ function renderDay(date) {
     content.appendChild(list);
   }
 
-  const actions = document.createElement("div");
-  actions.className = "day-actions";
-
-  const skipBtn = document.createElement("button");
-  skipBtn.className = "btn danger" + (isSkipped ? " is-active" : "");
-  skipBtn.innerHTML = isSkipped
-    ? `${ICONS["check-circle"]} Sí voy este día`
-    : `${ICONS["x-circle"]} No voy este día`;
-  skipBtn.addEventListener("click", () => toggleSkip(iso));
-  actions.appendChild(skipBtn);
-
-  content.appendChild(actions);
-}
-
-function toggleSkip(iso) {
-  const nowSkipped = skippedDates.has(iso);
-  if (nowSkipped) {
-    skippedDates.delete(iso);
-    notify("✅ Día restaurado", `Vuelves a tener marcado ${iso} como día de clase normal.`);
-  } else {
-    skippedDates.add(iso);
-    notify("🚫 Día quitado", `Has marcado ${iso} como día sin asistir.`);
-  }
-  saveSet(LS_SKIPPED, skippedDates);
-  render();
+  content.appendChild(buildAbsenceSection(iso));
 }
 
 // ----------------------------------------------------------------------------
-// Tareas a entregar
+// Avisos de falta (en tiempo real, compartidos con toda la clase)
+// ----------------------------------------------------------------------------
+function buildAbsenceSection(iso) {
+  const dayAbsences = (absencesByDate[iso] || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+  const section = document.createElement("div");
+  section.className = "absence-section";
+
+  const heading = document.createElement("div");
+  heading.className = "absence-heading";
+  heading.innerHTML = `${ICONS["user"]}Quién no va este día (${dayAbsences.length})`;
+  section.appendChild(heading);
+
+  const listWrap = document.createElement("div");
+  if (dayAbsences.length === 0) {
+    listWrap.innerHTML = `<div class="empty-inline">Nadie ha avisado que falta este día.</div>`;
+  } else {
+    dayAbsences.forEach((a) => {
+      const item = document.createElement("div");
+      item.className = "absence-item";
+      const initial = (a.student_name || "?").trim().charAt(0).toUpperCase() || "?";
+      item.innerHTML = `
+        <div class="absence-avatar">${initial}</div>
+        <div class="absence-info">
+          <p class="absence-name">${escapeHtml(a.student_name)}</p>
+          ${a.reason ? `<p class="absence-reason">${escapeHtml(a.reason)}</p>` : ""}
+        </div>`;
+      if (isOwn(a)) {
+        const delBtn = document.createElement("button");
+        delBtn.className = "absence-del";
+        delBtn.title = "Borrar mi aviso";
+        delBtn.innerHTML = ICONS["x"];
+        delBtn.addEventListener("click", async () => {
+          delBtn.disabled = true;
+          const ok = await deleteAbsence(a.id);
+          if (ok) {
+            applyAbsenceChange({ eventType: "DELETE", old: a });
+            render();
+          } else {
+            delBtn.disabled = false;
+            showToast("No se pudo borrar, prueba de nuevo");
+          }
+        });
+        item.appendChild(delBtn);
+      }
+      listWrap.appendChild(item);
+    });
+  }
+  section.appendChild(listWrap);
+
+  const form = document.createElement("form");
+  form.className = "inline-form";
+  form.hidden = true;
+  form.innerHTML = `
+    <input type="text" name="name" placeholder="Tu nombre" required maxlength="60" />
+    <input type="text" name="reason" placeholder="Motivo (opcional)" maxlength="140" />
+    <div class="inline-form-actions">
+      <button type="button" class="btn" data-cancel>Cancelar</button>
+      <button type="submit" class="btn primary">Enviar aviso</button>
+    </div>`;
+  section.appendChild(form);
+
+  const toggleBtn = document.createElement("button");
+  toggleBtn.className = "btn danger";
+  toggleBtn.innerHTML = `${ICONS["x-circle"]} Avisar que no voy`;
+  toggleBtn.addEventListener("click", () => {
+    form.hidden = !form.hidden;
+    if (!form.hidden) form.querySelector('input[name="name"]').focus();
+  });
+  section.appendChild(toggleBtn);
+
+  form.querySelector("[data-cancel]").addEventListener("click", () => {
+    form.hidden = true;
+    form.reset();
+  });
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = form.name.value.trim();
+    const reason = form.reason.value.trim();
+    if (!name) return;
+    const submitBtn = form.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    const row = await addAbsence(iso, name, reason);
+    submitBtn.disabled = false;
+    if (row) {
+      applyAbsenceChange({ eventType: "INSERT", new: row });
+      form.reset();
+      form.hidden = true;
+      render();
+    } else {
+      showToast("No se pudo enviar el aviso, prueba de nuevo");
+    }
+  });
+
+  return section;
+}
+
+// ----------------------------------------------------------------------------
+// Tareas a entregar (en tiempo real, compartidas con toda la clase)
 // ----------------------------------------------------------------------------
 function renderTasks() {
   const listEl = document.getElementById("taskList");
   listEl.innerHTML = "";
 
-  if (!TASKS || TASKS.length === 0) {
+  if (!tasksList || tasksList.length === 0) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.textContent = "No hay tareas pendientes añadidas todavía.";
@@ -421,7 +577,7 @@ function renderTasks() {
   }
 
   const now = new Date();
-  const sorted = [...TASKS].sort((a, b) => new Date(a.due) - new Date(b.due));
+  const sorted = [...tasksList].sort((a, b) => new Date(a.due) - new Date(b.due));
 
   sorted.forEach((task) => {
     const dueDate = new Date(task.due);
@@ -436,23 +592,86 @@ function renderTasks() {
     const info = document.createElement("div");
     info.className = "task-info";
     info.innerHTML = `
-      <p class="task-title">${task.title}</p>
-      <p class="task-meta ${overdue ? "overdue" : ""}">${task.subject} · ${dueDate.toLocaleDateString("es-ES", { day: "numeric", month: "short" })} ${dueDate.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}${overdue ? " · vencida" : ""}</p>
+      <p class="task-title">${escapeHtml(task.title)}</p>
+      <p class="task-meta ${overdue ? "overdue" : ""}">${escapeHtml(task.subject)} · ${dueDate.toLocaleDateString("es-ES", { day: "numeric", month: "short" })} ${dueDate.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}${overdue ? " · vencida" : ""}</p>
     `;
     card.appendChild(info);
 
-    if (task.link) {
+    const safeLink = sanitizeUrl(task.link);
+    if (safeLink) {
       const a = document.createElement("a");
       a.className = "task-link";
-      a.href = task.link;
+      a.href = safeLink;
       a.target = "_blank";
       a.rel = "noopener";
       a.innerHTML = ICONS["link6"];
       card.appendChild(a);
     }
+
+    if (isOwn(task)) {
+      const delBtn = document.createElement("button");
+      delBtn.className = "absence-del";
+      delBtn.title = "Borrar tarea";
+      delBtn.innerHTML = ICONS["x"];
+      delBtn.addEventListener("click", async () => {
+        delBtn.disabled = true;
+        const ok = await deleteTask(task.id);
+        if (ok) {
+          applyTaskChange({ eventType: "DELETE", old: task });
+          renderTasks();
+        } else {
+          delBtn.disabled = false;
+          showToast("No se pudo borrar, prueba de nuevo");
+        }
+      });
+      card.appendChild(delBtn);
+    }
+
     listEl.appendChild(card);
   });
 }
+
+const addTaskBtn = document.getElementById("addTaskBtn");
+const taskForm = document.getElementById("taskForm");
+addTaskBtn.textContent = "+";
+addTaskBtn.style.fontSize = "20px";
+addTaskBtn.style.fontWeight = "700";
+addTaskBtn.title = "Añadir tarea";
+
+addTaskBtn.addEventListener("click", () => {
+  taskForm.hidden = !taskForm.hidden;
+  if (!taskForm.hidden) {
+    document.getElementById("subjectList").innerHTML = Object.keys(SUBJECT_COLORS)
+      .map((s) => `<option value="${escapeHtml(s)}"></option>`)
+      .join("");
+    document.getElementById("taskSubject").focus();
+  }
+});
+document.getElementById("taskCancelBtn").addEventListener("click", () => {
+  taskForm.hidden = true;
+  taskForm.reset();
+});
+taskForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const subject = document.getElementById("taskSubject").value.trim();
+  const title = document.getElementById("taskTitle").value.trim();
+  const dueLocal = document.getElementById("taskDue").value;
+  const link = document.getElementById("taskLink").value.trim();
+  if (!subject || !title || !dueLocal) return;
+  const submitBtn = taskForm.querySelector('button[type="submit"]');
+  submitBtn.disabled = true;
+  const dueISO = new Date(dueLocal).toISOString();
+  const row = await addTask(subject, title, dueISO, link);
+  submitBtn.disabled = false;
+  if (row) {
+    applyTaskChange({ eventType: "INSERT", new: row });
+    renderTasks();
+    taskForm.reset();
+    taskForm.hidden = true;
+  } else {
+    showToast("No se pudo añadir la tarea, prueba de nuevo");
+  }
+});
 
 // ----------------------------------------------------------------------------
 // Service worker (opcional, permite instalar la web y verla offline)
@@ -462,7 +681,8 @@ if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("./sw.js").catch(() => {});
   });
 }
-  render();
+
+loadAndSubscribe();
 }
 
 

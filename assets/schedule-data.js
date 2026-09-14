@@ -106,12 +106,6 @@ export const HOLIDAY_MAP = Object.fromEntries(HOLIDAYS.map(h => [h.date, h.label
 export const COURSE_END = "2027-06-22";
 export const COURSE_START = "2026-09-15";
 
-// ============================================================================
-// TAREAS A ENTREGAR — añade aquí cada tarea y se mostrará en la web para toda
-// la clase (se sube al repo, así que en cuanto hagas "git push" lo ven todos).
-// Ejemplo:
-// { subject: "Aplicaciones Web", title: "Práctica 3 - Formularios", due: "2026-09-22T23:59", link: "https://classroom.google.com/..." },
-// ============================================================================
-export const TASKS = [
-  // Añade tus tareas aquí siguiendo el ejemplo de arriba
-];
+// Las tareas a entregar y los avisos de falta ya NO se editan aquí: se
+// guardan en Supabase (ver assets/db.js) y se añaden desde botones en la
+// propia web, en tiempo real y para toda la clase.

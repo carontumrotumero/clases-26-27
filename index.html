@@ -50,7 +50,21 @@
     <main id="dayContent"></main>
 
     <section class="tasks">
-      <h2 class="section-heading"><span id="tasksIcon"></span>Tareas a entregar</h2>
+      <div class="section-heading-row">
+        <h2 class="section-heading"><span id="tasksIcon"></span>Tareas a entregar</h2>
+        <button class="icon-btn" id="addTaskBtn" title="Añadir tarea" aria-label="Añadir tarea"></button>
+      </div>
+      <form id="taskForm" class="inline-form" hidden>
+        <input type="text" id="taskSubject" placeholder="Asignatura" list="subjectList" required />
+        <datalist id="subjectList"></datalist>
+        <input type="text" id="taskTitle" placeholder="Título de la tarea" required />
+        <input type="datetime-local" id="taskDue" required />
+        <input type="url" id="taskLink" placeholder="Enlace (opcional)" />
+        <div class="inline-form-actions">
+          <button type="button" class="btn" id="taskCancelBtn">Cancelar</button>
+          <button type="submit" class="btn primary">Añadir tarea</button>
+        </div>
+      </form>
       <div id="taskList"></div>
     </section>
 
