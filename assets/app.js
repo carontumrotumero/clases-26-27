@@ -674,11 +674,19 @@ taskForm.addEventListener("submit", async (e) => {
 });
 
 // ----------------------------------------------------------------------------
-// Service worker (opcional, permite instalar la web y verla offline)
+// Service worker (permite instalar la web y verla offline). Si se publica una
+// versión nueva, se recarga sola una vez para que nunca se quede pillada en
+// una copia vieja guardada en el navegador.
 // ----------------------------------------------------------------------------
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("./sw.js").catch(() => {});
+  });
+  let reloadedForUpdate = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (reloadedForUpdate) return;
+    reloadedForUpdate = true;
+    location.reload();
   });
 }
 

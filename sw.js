@@ -1,9 +1,12 @@
-const CACHE = "horario-v1";
+// v2: red primero (network-first) para que un cambio publicado se vea al
+// momento; solo se usa la copia guardada si no hay conexión.
+const CACHE = "horario-v2";
 const ASSETS = [
   "./",
   "./index.html",
   "./assets/style.css",
   "./assets/app.js",
+  "./assets/db.js",
   "./assets/icons.js",
   "./assets/schedule-data.js",
   "./manifest.webmanifest",
@@ -22,7 +25,14 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
+  if (event.request.method !== "GET") return;
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request).catch(() => cached))
+    fetch(event.request)
+      .then((response) => {
+        const copy = response.clone();
+        caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
