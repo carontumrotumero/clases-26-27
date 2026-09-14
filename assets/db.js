@@ -1,16 +1,24 @@
 // ============================================================================
 // Conexión a Supabase — base de datos en tiempo real compartida por toda la
 // clase (avisos de falta y tareas a entregar). La URL y la clave "anon" son
-// públicas por diseño: la protección real está en las políticas de RLS del
-// proyecto (cualquiera puede leer/insertar, pero solo quien creó una fila
-// puede borrarla, comprobado en el servidor con un token propio del
-// navegador — ver la cabecera x-owner-token más abajo).
+// públicas por diseño (cualquier web que use Supabase las expone), pero la
+// base de datos en sí NO se puede leer ni escribir sin la contraseña de la
+// web: cada petición debe llevar una cabecera x-site-key derivada de esa
+// contraseña, y el valor que se espera solo existe en las políticas RLS de
+// Supabase — nunca en este repositorio. Además, solo quien creó una fila
+// puede borrarla (cabecera x-owner-token, un identificador propio del
+// navegador, no la contraseña).
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPABASE_URL = "https://zgsdlgmvcpdavtscvbyi.supabase.co";
 const SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpnc2RsZ212Y3BkYXZ0c2N2YnlpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk0MTgxNzMsImV4cCI6MjEwNDk5NDE3M30.ilxEuaRC_Rj31GFps8-f-Ap9ZBY3wxGeFb35gU4LCRo";
+
+// Debe coincidir con el sufijo usado al calcular la clave que se guardó en
+// las políticas RLS de Supabase (ver el comentario de PASSWORD_HASH en
+// app.js). No es un secreto — el secreto es la contraseña, no este sufijo.
+const SITE_KEY_SALT = "::db-key-v1";
 
 const LS_OWNER = "horario:ownerToken";
 
@@ -25,9 +33,31 @@ function getOwnerToken() {
 
 export const ownerToken = getOwnerToken();
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  global: { headers: { "x-owner-token": ownerToken } },
-});
+async function sha256Hex(text) {
+  const enc = new TextEncoder().encode(text);
+  const buf = await crypto.subtle.digest("SHA-256", enc);
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export async function computeSiteKey(password) {
+  return sha256Hex(password + SITE_KEY_SALT);
+}
+
+let supabase = null;
+
+// Se llama una vez, justo después de comprobar la contraseña (o al recuperar
+// la clave ya calculada de una visita anterior). Hasta que esto no se llama,
+// ninguna de las funciones de abajo puede usarse.
+export function configureDb(siteKey) {
+  supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { "x-owner-token": ownerToken, "x-site-key": siteKey } },
+  });
+}
+
+function client() {
+  if (!supabase) throw new Error("configureDb() no se ha llamado todavía");
+  return supabase;
+}
 
 export function isOwn(row) {
   return row.owner_token === ownerToken;
@@ -37,7 +67,7 @@ export function isOwn(row) {
 // Avisos de falta ("no puedo ir a clase")
 // ---------------------------------------------------------------------------
 export async function fetchAbsences() {
-  const { data, error } = await supabase
+  const { data, error } = await client()
     .from("absences")
     .select("id, class_date, student_name, reason, owner_token, created_at")
     .order("created_at", { ascending: true });
@@ -49,7 +79,7 @@ export async function fetchAbsences() {
 }
 
 export async function addAbsence(classDate, studentName, reason) {
-  const { data, error } = await supabase
+  const { data, error } = await client()
     .from("absences")
     .insert({
       class_date: classDate,
@@ -67,13 +97,13 @@ export async function addAbsence(classDate, studentName, reason) {
 }
 
 export async function deleteAbsence(id) {
-  const { error } = await supabase.from("absences").delete().eq("id", id);
+  const { error } = await client().from("absences").delete().eq("id", id);
   if (error) console.error("deleteAbsence", error);
   return !error;
 }
 
 export function subscribeAbsences(onChange) {
-  return supabase
+  return client()
     .channel("absences-changes")
     .on("postgres_changes", { event: "*", schema: "public", table: "absences" }, onChange)
     .subscribe();
@@ -83,7 +113,7 @@ export function subscribeAbsences(onChange) {
 // Tareas a entregar
 // ---------------------------------------------------------------------------
 export async function fetchTasks() {
-  const { data, error } = await supabase
+  const { data, error } = await client()
     .from("tasks")
     .select("id, subject, title, due, link, owner_token, created_at")
     .order("due", { ascending: true });
@@ -95,7 +125,7 @@ export async function fetchTasks() {
 }
 
 export async function addTask(subject, title, due, link) {
-  const { data, error } = await supabase
+  const { data, error } = await client()
     .from("tasks")
     .insert({
       subject,
@@ -114,13 +144,13 @@ export async function addTask(subject, title, due, link) {
 }
 
 export async function deleteTask(id) {
-  const { error } = await supabase.from("tasks").delete().eq("id", id);
+  const { error } = await client().from("tasks").delete().eq("id", id);
   if (error) console.error("deleteTask", error);
   return !error;
 }
 
 export function subscribeTasks(onChange) {
-  return supabase
+  return client()
     .channel("tasks-changes")
     .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, onChange)
     .subscribe();

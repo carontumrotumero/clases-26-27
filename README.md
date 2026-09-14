@@ -21,20 +21,11 @@ muestran como nombre + inicial del apellido para reducir lo identificable.
 
 ## Contraseña de acceso
 
-La web pide una contraseña antes de mostrar el horario. Compártesela tú
-mismo a tus compañeros por el canal que uses (no está escrita en ningún
-sitio público). En el código (`assets/app.js`) solo se guarda su hash
-SHA-256, nunca la contraseña en texto plano — aun así, al ser una web
-estática sin servidor, cualquiera con acceso al código fuente podría
-intentar romper ese hash por fuerza bruta; es una barrera razonable para
-que no la vea cualquiera de paso, no una protección de nivel bancario.
-
-Para cambiar la contraseña: calcula el SHA-256 (en minúsculas, hexadecimal)
-de la nueva contraseña y sustituye el valor de `PASSWORD_HASH` en
-`assets/app.js`. Por ejemplo, desde una terminal:
-```bash
-echo -n "TuNuevaContraseña" | shasum -a 256
-```
+La web pide una contraseña antes de mostrar el horario y antes de poder leer
+o escribir nada en la base de datos. Compártesela tú mismo a tus compañeros
+por el canal que uses — no está escrita en este repositorio ni en ningún
+sitio público. Si necesitas cambiarla, pídemelo directamente a mí en vez de
+documentar aquí cómo está hecho.
 
 ## Avisos de falta y tareas (base de datos en tiempo real)
 
@@ -51,10 +42,13 @@ Ya no se editan en el código. Directamente en la web:
   con tu nombre); nadie más ve el botón de borrar en tus entradas.
 
 Esto usa [Supabase](https://supabase.com) (plan gratuito) como base de
-datos en tiempo real — la conexión está en `assets/db.js`. Como no hay login
-por alumno, cualquiera con la contraseña de la web puede leer y añadir
-entradas; es una protección pensada para una clase de confianza, no para
-datos sensibles.
+datos en tiempo real. La base de datos no acepta ninguna petición (ni
+lectura ni escritura) de quien no sepa la contraseña de la web, aunque
+tenga el código fuente delante — está comprobado en el servidor, no solo en
+la pantalla de la web. Aun así, como no hay login individual por alumno,
+cualquiera con la contraseña puede leer y añadir entradas de cualquiera; es
+una protección pensada para una clase de confianza, no para datos
+sensibles.
 
 ## Cómo cambiar el horario o añadir un festivo
 

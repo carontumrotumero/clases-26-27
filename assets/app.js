@@ -9,6 +9,8 @@ import {
 } from "./schedule-data.js";
 import {
   isOwn,
+  computeSiteKey,
+  configureDb,
   fetchAbsences,
   addAbsence,
   deleteAbsence,
@@ -695,11 +697,17 @@ loadAndSubscribe();
 
 
 // ----------------------------------------------------------------------------
-// Bloqueo con contraseña (solo un filtro básico: al ser una web estática,
-// el hash es visible en el código fuente, así que no sustituye a una
-// autenticación real, pero evita que se vea el horario a simple vista)
+// Bloqueo con contraseña. Verificarla en el navegador (comparando su hash)
+// es solo la primera barrera y, al ser una web estática, alguien con el
+// código fuente podría llegar a intentar romperla por fuerza bruta. La
+// protección de verdad está en Supabase: sin escribir la contraseña
+// correcta aquí nunca se calcula la clave que la base de datos exige (ver
+// assets/db.js), así que aunque alguien se salte esta pantalla a mano
+// tocando el HTML, no consigue leer ni escribir ni un solo dato.
 // ----------------------------------------------------------------------------
 const LS_UNLOCKED = "horario:unlocked";
+const LS_SITEKEY = "horario:siteKey";
+const LS_ATTEMPTS = "horario:lockAttempts";
 const PASSWORD_HASH = "18ee924cb67c6f6550c06fe2fa14a2e427d2c239c55c19d89de5cd5ffaa59030";
 
 async function sha256Hex(text) {
@@ -709,13 +717,24 @@ async function sha256Hex(text) {
 }
 
 function isUnlocked() {
-  return localStorage.getItem(LS_UNLOCKED) === "1";
+  return localStorage.getItem(LS_UNLOCKED) === "1" && !!localStorage.getItem(LS_SITEKEY);
 }
 
 function showApp() {
+  configureDb(localStorage.getItem(LS_SITEKEY));
   document.getElementById("lockScreen").hidden = true;
   document.getElementById("app").hidden = false;
   boot();
+}
+
+// Freno sencillo: cada fallo espera un poco más antes de dejar volver a
+// probar (no detiene a quien llama a la función directamente desde la
+// consola, pero sí frena los intentos repetidos desde el formulario).
+function getAttempts() {
+  return Number(localStorage.getItem(LS_ATTEMPTS) || "0");
+}
+function attemptDelayMs(attempts) {
+  return Math.min(attempts * attempts * 500, 15000);
 }
 
 function initLock() {
@@ -733,16 +752,31 @@ function initLock() {
   const form = document.getElementById("lockForm");
   const input = document.getElementById("lockInput");
   const error = document.getElementById("lockError");
+  const submitBtn = form.querySelector('button[type="submit"]');
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
+    const wait = attemptDelayMs(getAttempts());
+    if (wait > 0) {
+      submitBtn.disabled = true;
+      error.hidden = false;
+      error.textContent = `Espera ${Math.ceil(wait / 1000)}s antes de volver a probar.`;
+      await new Promise((r) => setTimeout(r, wait));
+      submitBtn.disabled = false;
+    }
+
     const hash = await sha256Hex(input.value);
     if (hash === PASSWORD_HASH) {
+      localStorage.removeItem(LS_ATTEMPTS);
       error.hidden = true;
+      const siteKey = await computeSiteKey(input.value);
       localStorage.setItem(LS_UNLOCKED, "1");
+      localStorage.setItem(LS_SITEKEY, siteKey);
       showApp();
     } else {
+      localStorage.setItem(LS_ATTEMPTS, String(getAttempts() + 1));
       error.hidden = false;
+      error.textContent = "Contraseña incorrecta.";
       input.value = "";
       input.focus();
     }
