@@ -168,41 +168,43 @@ async function loadAndSubscribe() {
 }
 
 // ----------------------------------------------------------------------------
-// Tema (claro / oscuro / automático)
+// Tema (claro / oscuro). Arranca según el sistema la primera vez; a partir
+// de ahí es un interruptor simple de dos estados (antes tenía un tercer
+// estado "automático" que compartía el mismo icono que "oscuro", por eso se
+// sentía roto: a veces tocar el botón no parecía cambiar nada).
 // ----------------------------------------------------------------------------
 const root = document.documentElement;
 
+function systemPrefersDark() {
+  return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+function currentTheme() {
+  const stored = localStorage.getItem(LS_THEME);
+  if (stored === "light" || stored === "dark") return stored;
+  return systemPrefersDark() ? "dark" : "light";
+}
+
 function applyTheme(mode) {
-  if (mode === "light") root.setAttribute("data-theme", "light");
-  else if (mode === "dark") root.setAttribute("data-theme", "dark");
-  else root.removeAttribute("data-theme"); // sistema
+  root.setAttribute("data-theme", mode);
   renderThemeIcon(mode);
 }
 
 function renderThemeIcon(mode) {
   const btn = document.getElementById("themeBtn");
-  const icon = mode === "dark" ? ICONS["sun"] : mode === "light" ? ICONS["moon"] : ICONS["sun"];
-  btn.innerHTML = icon;
-  btn.title =
-    mode === "light" ? "Modo claro (toca para oscuro)"
-    : mode === "dark" ? "Modo oscuro (toca para automático)"
-    : "Tema automático (toca para claro)";
+  btn.innerHTML = mode === "dark" ? ICONS["sun"] : ICONS["moon"];
+  btn.title = mode === "dark" ? "Modo oscuro (toca para claro)" : "Modo claro (toca para oscuro)";
 }
 
-function getTheme() {
-  return localStorage.getItem(LS_THEME) || "auto";
-}
 function setTheme(mode) {
   localStorage.setItem(LS_THEME, mode);
   applyTheme(mode);
 }
 function cycleTheme() {
-  const cur = getTheme();
-  const next = cur === "auto" ? "light" : cur === "light" ? "dark" : "auto";
-  setTheme(next);
+  setTheme(currentTheme() === "dark" ? "light" : "dark");
 }
 
-applyTheme(getTheme());
+applyTheme(currentTheme());
 document.getElementById("themeBtn").addEventListener("click", cycleTheme);
 document.getElementById("brandIcon").innerHTML = ICONS["book-open"];
 document.getElementById("tasksIcon").innerHTML = ICONS["bookmark2"];
