@@ -19,6 +19,10 @@ import {
   addTask,
   deleteTask,
   subscribeTasks,
+  fetchDayOverrides,
+  addDayOverride,
+  deleteDayOverride,
+  subscribeDayOverrides,
   calendarFeedUrl,
 } from "./db.js";
 
@@ -111,6 +115,21 @@ let notifiedKeys = loadSet(LS_NOTIFIED_KEYS);
 // ----------------------------------------------------------------------------
 let absencesByDate = {}; // { "2026-09-21": [ {id, student_name, reason, owner_token, ...}, ... ] }
 let tasksList = [];
+let dayOverridesList = []; // avisos de huelgas/festivos locales/traspasos (ver buildEffectiveHoliday)
+
+// Combina el calendario oficial (HOLIDAY_MAP) con los avisos que ha puesto la
+// clase: "closed" añade un día sin clase que no estaba en el calendario
+// oficial (huelga, festivo local...); "open" quita un festivo oficial que se
+// ha trasladado a otro día. Si hay varios avisos para el mismo día, "closed"
+// gana siempre (por seguridad, ante la duda no hay clase).
+function effectiveHoliday(iso) {
+  const closed = dayOverridesList.find((o) => o.date === iso && o.kind === "closed");
+  if (closed) return { holiday: true, label: closed.label || "Aviso de la clase: no hay clase", override: closed };
+  const open = dayOverridesList.find((o) => o.date === iso && o.kind === "open");
+  if (open) return { holiday: false, override: open };
+  if (HOLIDAY_MAP[iso]) return { holiday: true, label: HOLIDAY_MAP[iso] };
+  return { holiday: false };
+}
 
 function groupAbsences(rows) {
   const map = {};
@@ -150,11 +169,24 @@ function applyTaskChange(payload) {
   }
 }
 
+function applyOverrideChange(payload) {
+  if (payload.eventType === "INSERT") {
+    if (!dayOverridesList.some((o) => o.id === payload.new.id)) dayOverridesList.push(payload.new);
+  } else if (payload.eventType === "DELETE") {
+    dayOverridesList = dayOverridesList.filter((o) => o.id !== payload.old.id);
+  } else if (payload.eventType === "UPDATE") {
+    const idx = dayOverridesList.findIndex((o) => o.id === payload.new.id);
+    if (idx >= 0) dayOverridesList[idx] = payload.new;
+  }
+}
+
 async function loadAndSubscribe() {
-  const [absences, tasks] = await Promise.all([fetchAbsences(), fetchTasks()]);
+  const [absences, tasks, overrides] = await Promise.all([fetchAbsences(), fetchTasks(), fetchDayOverrides()]);
   absencesByDate = groupAbsences(absences);
   tasksList = tasks;
+  dayOverridesList = overrides;
   render();
+  renderOverrides();
 
   subscribeAbsences((payload) => {
     applyAbsenceChange(payload);
@@ -163,6 +195,11 @@ async function loadAndSubscribe() {
   subscribeTasks((payload) => {
     applyTaskChange(payload);
     renderTasks();
+  });
+  subscribeDayOverrides((payload) => {
+    applyOverrideChange(payload);
+    render();
+    renderOverrides();
   });
 
   if (localStorage.getItem(LS_NOTIF_PREF) === "on") scheduleTodayReminders();
@@ -284,7 +321,7 @@ function scheduleTodayReminders() {
   if (!notifSupported() || Notification.permission !== "granted") return;
   const now = new Date();
   const iso = toISO(now);
-  if (HOLIDAY_MAP[iso] || iso < COURSE_START || iso > COURSE_END) return;
+  if (effectiveHoliday(iso).holiday || iso < COURSE_START || iso > COURSE_END) return;
   const weekday = now.getDay();
   if (weekday === 0 || weekday === 6) return;
   const iAmOut = (absencesByDate[iso] || []).some((a) => isOwn(a));
@@ -371,7 +408,7 @@ function render() {
   tabsEl.innerHTML = "";
   dates.forEach((date, i) => {
     const iso = toISO(date);
-    const isHoliday = !!HOLIDAY_MAP[iso];
+    const isHoliday = effectiveHoliday(iso).holiday;
     const absenceCount = (absencesByDate[iso] || []).length;
     const btn = document.createElement("button");
     btn.className = "day-tab";
@@ -401,7 +438,7 @@ function renderDay(date) {
   const content = document.getElementById("dayContent");
   content.innerHTML = "";
 
-  const holidayLabel = HOLIDAY_MAP[iso];
+  const holidayInfo = effectiveHoliday(iso);
   const exception = SCHEDULE_EXCEPTIONS[iso];
   const beforeCourseStart = iso < COURSE_START;
   const afterCourseEnd = iso > COURSE_END;
@@ -421,12 +458,21 @@ function renderDay(date) {
     return;
   }
 
-  if (holidayLabel) {
+  if (holidayInfo.holiday) {
     const banner = document.createElement("div");
     banner.className = "day-banner holiday";
-    banner.innerHTML = `${ICONS["calendar-x"]}<div><strong>${holidayLabel}</strong><br/>No hay clase este día.</div>`;
+    banner.innerHTML = `${ICONS["calendar-x"]}<div><strong>${escapeHtml(holidayInfo.label)}</strong><br/>No hay clase este día.</div>`;
     content.appendChild(banner);
     return;
+  }
+
+  if (holidayInfo.override) {
+    const banner = document.createElement("div");
+    banner.className = "day-banner exception";
+    banner.innerHTML = `${ICONS["calendar-check"]}<div><strong>Traspaso de festivo</strong>${
+      holidayInfo.override.label ? `: ${escapeHtml(holidayInfo.override.label)}` : ""
+    }<br/>Aunque el calendario oficial dijera que era festivo, hoy sí hay clase.</div>`;
+    content.appendChild(banner);
   }
 
   if (exception) {
@@ -635,6 +681,99 @@ function renderTasks() {
     listEl.appendChild(card);
   });
 }
+
+// ----------------------------------------------------------------------------
+// Avisos para toda la clase (huelgas, festivos locales, traspasos de festivo)
+// — en tiempo real y compartidos, igual que las tareas y las faltas.
+// ----------------------------------------------------------------------------
+document.getElementById("noticesIcon").innerHTML = ICONS["alert-triangle"];
+
+function fmtNoticeDate(iso) {
+  return isoToDate(iso).toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" });
+}
+
+function renderOverrides() {
+  const listEl = document.getElementById("noticeList");
+  listEl.innerHTML = "";
+
+  const sorted = [...dayOverridesList].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+  if (sorted.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "Nadie ha avisado de huelgas, festivos locales ni traspasos todavía.";
+    listEl.appendChild(empty);
+    return;
+  }
+
+  sorted.forEach((o) => {
+    const item = document.createElement("div");
+    item.className = "absence-item";
+    const closed = o.kind === "closed";
+    item.innerHTML = `
+      <div class="absence-avatar">${closed ? ICONS["calendar-x"] : ICONS["calendar-check"]}</div>
+      <div class="absence-info">
+        <p class="absence-name">${fmtNoticeDate(o.date)} · ${closed ? "No hay clase" : "Sí hay clase"}</p>
+        ${o.label ? `<p class="absence-reason">${escapeHtml(o.label)}</p>` : ""}
+      </div>`;
+    if (isOwn(o)) {
+      const delBtn = document.createElement("button");
+      delBtn.className = "absence-del";
+      delBtn.title = "Borrar aviso";
+      delBtn.innerHTML = ICONS["x"];
+      delBtn.addEventListener("click", async () => {
+        delBtn.disabled = true;
+        const ok = await deleteDayOverride(o.id);
+        if (ok) {
+          applyOverrideChange({ eventType: "DELETE", old: o });
+          render();
+          renderOverrides();
+        } else {
+          delBtn.disabled = false;
+          showToast("No se pudo borrar, prueba de nuevo");
+        }
+      });
+      item.appendChild(delBtn);
+    }
+    listEl.appendChild(item);
+  });
+}
+
+const addNoticeBtn = document.getElementById("addNoticeBtn");
+const noticeForm = document.getElementById("noticeForm");
+addNoticeBtn.textContent = "+";
+addNoticeBtn.style.fontSize = "20px";
+addNoticeBtn.style.fontWeight = "700";
+addNoticeBtn.title = "Añadir aviso";
+
+addNoticeBtn.addEventListener("click", () => {
+  noticeForm.hidden = !noticeForm.hidden;
+  if (!noticeForm.hidden) document.getElementById("noticeDate").focus();
+});
+document.getElementById("noticeCancelBtn").addEventListener("click", () => {
+  noticeForm.hidden = true;
+  noticeForm.reset();
+});
+noticeForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const date = document.getElementById("noticeDate").value;
+  const kind = document.getElementById("noticeKind").value;
+  const label = document.getElementById("noticeLabel").value.trim();
+  if (!date || !kind) return;
+  const submitBtn = noticeForm.querySelector('button[type="submit"]');
+  submitBtn.disabled = true;
+  const row = await addDayOverride(date, kind, label);
+  submitBtn.disabled = false;
+  if (row) {
+    applyOverrideChange({ eventType: "INSERT", new: row });
+    render();
+    renderOverrides();
+    noticeForm.reset();
+    noticeForm.hidden = true;
+  } else {
+    showToast("No se pudo enviar el aviso, prueba de nuevo");
+  }
+});
 
 // ----------------------------------------------------------------------------
 // Sincronizar con Google Calendar / Calendario de iCloud-Apple (enlace .ics

@@ -47,6 +47,26 @@
   <div class="day-tabs" id="dayTabs"></div>
 
   <div class="wrap">
+    <section class="class-notices">
+      <div class="section-heading-row">
+        <h2 class="section-heading"><span id="noticesIcon"></span>Huelgas, festivos locales y traspasos</h2>
+        <button class="icon-btn" id="addNoticeBtn" title="Añadir aviso" aria-label="Añadir aviso"></button>
+      </div>
+      <form id="noticeForm" class="inline-form" hidden>
+        <input type="date" id="noticeDate" required />
+        <select id="noticeKind" required>
+          <option value="closed">No hay clase (huelga, festivo local...)</option>
+          <option value="open">Sí hay clase (se traslada un festivo)</option>
+        </select>
+        <input type="text" id="noticeLabel" placeholder="Motivo (opcional)" maxlength="140" />
+        <div class="inline-form-actions">
+          <button type="button" class="btn" id="noticeCancelBtn">Cancelar</button>
+          <button type="submit" class="btn primary">Avisar a la clase</button>
+        </div>
+      </form>
+      <div id="noticeList"></div>
+    </section>
+
     <main id="dayContent"></main>
 
     <section class="calendar-sync">

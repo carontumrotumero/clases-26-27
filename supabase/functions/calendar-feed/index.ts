@@ -137,10 +137,31 @@ function weekdayOf(dateISO: string): number {
 }
 
 // --- Generación del calendario ----------------------------------------------
-function buildClassEvents(): string[] {
+function supabaseClient() {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  return createClient(supabaseUrl, serviceRoleKey);
+}
+
+// day_overrides: avisos que ha puesto la clase (huelgas, festivos locales,
+// traspasos de festivo) — igual que en el frontend (ver effectiveHoliday en
+// app.js), "closed" gana siempre si hay varios avisos el mismo día.
+type DayOverride = { id: string; date: string; kind: "closed" | "open"; label: string | null };
+
+async function fetchOverrides(): Promise<DayOverride[]> {
+  const { data, error } = await supabaseClient().from("day_overrides").select("id, date, kind, label");
+  if (error || !data) return [];
+  return data as DayOverride[];
+}
+
+function buildClassEvents(overrides: DayOverride[]): string[] {
+  const closedDates = new Set(overrides.filter((o) => o.kind === "closed").map((o) => o.date));
+  const openDates = new Set(overrides.filter((o) => o.kind === "open").map((o) => o.date));
+
   const events: string[] = [];
   for (const dateISO of datesBetween(COURSE_START, COURSE_END)) {
-    if (HOLIDAY_DATES.has(dateISO)) continue;
+    if (closedDates.has(dateISO)) continue;
+    if (HOLIDAY_DATES.has(dateISO) && !openDates.has(dateISO)) continue;
     const wd = weekdayOf(dateISO);
     if (wd > 5) continue;
     const slots = WEEK_SCHEDULE[wd] || [];
@@ -166,10 +187,32 @@ function buildClassEvents(): string[] {
   return events;
 }
 
+function buildOverrideNoticeEvents(overrides: DayOverride[]): string[] {
+  // Un evento de día completo por aviso, para que se vea en el calendario
+  // aunque no haya ninguna clase afectada ese día concreto (fin de semana,
+  // periodo de vacaciones ya sin clases normales, etc.).
+  return overrides.map((o) => {
+    const dateCompact = o.date.replace(/-/g, "");
+    const next = new Date(o.date + "T00:00:00Z");
+    next.setUTCDate(next.getUTCDate() + 1);
+    const nextCompact = next.toISOString().slice(0, 10).replace(/-/g, "");
+    const summary = o.kind === "closed" ? "🚫 No hay clase" + (o.label ? ": " + o.label : "") : "✅ Sí hay clase (traspaso de festivo)" + (o.label ? ": " + o.label : "");
+    return [
+      "BEGIN:VEVENT",
+      `UID:notice-${o.id}@horario-clase.carontumrotumero`,
+      `DTSTAMP:${icsStamp(new Date())}`,
+      `DTSTART;VALUE=DATE:${dateCompact}`,
+      `DTEND;VALUE=DATE:${nextCompact}`,
+      foldLine(`SUMMARY:${escapeICS(summary)}`),
+      "STATUS:CONFIRMED",
+      "TRANSP:TRANSPARENT",
+      "END:VEVENT",
+    ].join("\r\n");
+  });
+}
+
 async function buildTaskEvents(): Promise<string[]> {
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const supabase = createClient(supabaseUrl, serviceRoleKey);
+  const supabase = supabaseClient();
 
   const { data, error } = await supabase
     .from("tasks")
@@ -228,9 +271,10 @@ Deno.serve(async (req: Request) => {
     return new Response("No autorizado.", { status: 403 });
   }
 
-  const classEvents = buildClassEvents();
-  const taskEvents = await buildTaskEvents();
-  const ics = buildCalendar([...classEvents, ...taskEvents]);
+  const [overrides, taskEvents] = await Promise.all([fetchOverrides(), buildTaskEvents()]);
+  const classEvents = buildClassEvents(overrides);
+  const noticeEvents = buildOverrideNoticeEvents(overrides);
+  const ics = buildCalendar([...classEvents, ...noticeEvents, ...taskEvents]);
 
   return new Response(ics, {
     status: 200,

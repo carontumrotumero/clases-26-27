@@ -305,6 +305,19 @@ section.tasks {
 section.calendar-sync {
   margin-top: 34px;
 }
+
+section.class-notices {
+  margin-bottom: 22px;
+}
+section.class-notices .inline-form select {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13.5px;
+}
 .sync-panel {
   background: var(--card-bg);
   border: 1px solid var(--border);
@@ -404,6 +417,7 @@ section.calendar-sync {
   display: flex; align-items: center; justify-content: center;
   font-weight: 700; font-size: 12.5px; flex-shrink: 0;
 }
+.absence-avatar svg { width: 15px; height: 15px; }
 .absence-info { flex: 1; min-width: 0; }
 .absence-name { font-weight: 650; font-size: 13.5px; margin: 0; }
 .absence-reason { font-size: 12px; color: var(--text-muted); margin: 1px 0 0; }

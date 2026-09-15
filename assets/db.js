@@ -163,3 +163,48 @@ export function subscribeTasks(onChange) {
     .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, onChange)
     .subscribe();
 }
+
+// ---------------------------------------------------------------------------
+// Avisos para toda la clase (huelgas, festivos locales, traspasos de festivo)
+// kind: "closed" -> ese día no hay clase (aunque el calendario oficial diga
+//       que sí, por ejemplo una huelga o un festivo local no incluido).
+// kind: "open"   -> ese día SÍ hay clase aunque el calendario oficial lo
+//       marque como festivo (traspaso: el festivo se mueve a otro día).
+// ---------------------------------------------------------------------------
+export async function fetchDayOverrides() {
+  const { data, error } = await client()
+    .from("day_overrides")
+    .select("id, date, kind, label, owner_token, created_at")
+    .order("date", { ascending: true });
+  if (error) {
+    console.error("fetchDayOverrides", error);
+    return [];
+  }
+  return data;
+}
+
+export async function addDayOverride(date, kind, label) {
+  const { data, error } = await client()
+    .from("day_overrides")
+    .insert({ date, kind, label: label || null, owner_token: ownerToken })
+    .select()
+    .single();
+  if (error) {
+    console.error("addDayOverride", error);
+    return null;
+  }
+  return data;
+}
+
+export async function deleteDayOverride(id) {
+  const { error } = await client().from("day_overrides").delete().eq("id", id);
+  if (error) console.error("deleteDayOverride", error);
+  return !error;
+}
+
+export function subscribeDayOverrides(onChange) {
+  return client()
+    .channel("day-overrides-changes")
+    .on("postgres_changes", { event: "*", schema: "public", table: "day_overrides" }, onChange)
+    .subscribe();
+}
