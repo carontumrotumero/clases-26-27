@@ -49,6 +49,24 @@
   <div class="wrap">
     <main id="dayContent"></main>
 
+    <section class="calendar-sync">
+      <div class="section-heading-row">
+        <h2 class="section-heading"><span id="syncIcon"></span>Sincronizar con tu calendario</h2>
+        <button class="icon-btn" id="syncToggleBtn" title="Mostrar opciones" aria-label="Mostrar opciones"></button>
+      </div>
+      <div id="syncPanel" class="sync-panel" hidden>
+        <p class="sync-hint">
+          Añádelo una vez y se actualiza solo (clases, festivos y tareas) — Google y Apple lo
+          revisan automáticamente cada pocas horas, sin volver a importar nada.
+        </p>
+        <div class="sync-actions">
+          <a class="btn" id="syncGoogleBtn" target="_blank" rel="noopener">Añadir a Google Calendar</a>
+          <a class="btn" id="syncAppleBtn">Añadir a Calendario (iCloud/Apple)</a>
+          <button type="button" class="btn" id="syncCopyBtn">Copiar enlace</button>
+        </div>
+      </div>
+    </section>
+
     <section class="tasks">
       <div class="section-heading-row">
         <h2 class="section-heading"><span id="tasksIcon"></span>Tareas a entregar</h2>

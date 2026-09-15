@@ -43,6 +43,14 @@ export async function computeSiteKey(password) {
   return sha256Hex(password + SITE_KEY_SALT);
 }
 
+// URL del feed de calendario (.ics) suscribible desde Google Calendar o
+// Calendario de iCloud/Apple. Lleva la misma clave derivada de la contraseña
+// como parámetro (los calendarios no pueden mandar cabeceras al suscribirse),
+// así que solo quien conoce la contraseña puede generar un enlace válido.
+export function calendarFeedUrl(siteKey) {
+  return `${SUPABASE_URL}/functions/v1/calendar-feed?key=${encodeURIComponent(siteKey)}`;
+}
+
 let supabase = null;
 
 // Se llama una vez, justo después de comprobar la contraseña (o al recuperar

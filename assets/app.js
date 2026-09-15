@@ -19,6 +19,7 @@ import {
   addTask,
   deleteTask,
   subscribeTasks,
+  calendarFeedUrl,
 } from "./db.js";
 
 function boot() {
@@ -634,6 +635,34 @@ function renderTasks() {
     listEl.appendChild(card);
   });
 }
+
+// ----------------------------------------------------------------------------
+// Sincronizar con Google Calendar / Calendario de iCloud-Apple (enlace .ics
+// suscribible — ver assets/db.js y supabase/functions/calendar-feed).
+// ----------------------------------------------------------------------------
+document.getElementById("syncIcon").innerHTML = ICONS["calendar-check"];
+const syncToggleBtn = document.getElementById("syncToggleBtn");
+const syncPanel = document.getElementById("syncPanel");
+syncToggleBtn.innerHTML = ICONS["link6"];
+
+const feedUrl = calendarFeedUrl(localStorage.getItem(LS_SITEKEY));
+const feedUrlWebcal = feedUrl.replace(/^https?:/, "webcal:");
+document.getElementById("syncGoogleBtn").href =
+  "https://calendar.google.com/calendar/r/settings/addbyurl?cid=" + encodeURIComponent(feedUrl);
+document.getElementById("syncAppleBtn").href = feedUrlWebcal;
+
+syncToggleBtn.addEventListener("click", () => {
+  syncPanel.hidden = !syncPanel.hidden;
+});
+
+document.getElementById("syncCopyBtn").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(feedUrl);
+    showToast("Enlace copiado");
+  } catch {
+    showToast(feedUrl);
+  }
+});
 
 const addTaskBtn = document.getElementById("addTaskBtn");
 const taskForm = document.getElementById("taskForm");

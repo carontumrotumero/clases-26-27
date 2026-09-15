@@ -50,6 +50,42 @@ cualquiera con la contraseña puede leer y añadir entradas de cualquiera; es
 una protección pensada para una clase de confianza, no para datos
 sensibles.
 
+## Sincronizar con Google Calendar / Calendario de iCloud-Apple
+
+En "Sincronizar con tu calendario" hay un enlace que se añade **una sola
+vez** como calendario "suscrito" en Google Calendar o en Calendario de
+Apple/iCloud. A partir de ahí se actualiza solo con las clases, festivos y
+tareas — Google y Apple lo vuelven a pedir automáticamente cada pocas horas
+(no es instantáneo al segundo, pero no hay que volver a importar nada ni
+iniciar sesión con ninguna cuenta).
+
+Técnicamente es una Edge Function de Supabase
+(`supabase/functions/calendar-feed`) que genera un archivo `.ics` al vuelo.
+Como los calendarios no pueden mandar cabeceras personalizadas al
+suscribirse, la clave de acceso va en la propia URL — es la misma clave
+derivada de la contraseña de la web, así que sin la contraseña correcta no
+se puede generar un enlace válido. Una sincronización de verdad en tiempo
+real y en los dos sentidos (que además escribiera en el calendario)
+necesitaría que cada alumno iniciara sesión con su cuenta de Google
+(OAuth) y, para iCloud, no existe una API pública para eso — por eso se
+optó por este enlace suscribible, que funciona para cualquiera sin pedir
+ningún inicio de sesión.
+
+**Importante:** el horario (`WEEK_SCHEDULE`, `SCHEDULE_EXCEPTIONS`,
+festivos) está duplicado dentro de esa función porque no puede importar
+`assets/schedule-data.js` directamente. Si cambias el horario, actualiza
+los dos sitios y vuelve a desplegar la función (`supabase functions
+deploy calendar-feed` o desde el panel de Supabase).
+
+## Recordar la contraseña por dispositivo
+
+Al introducirla correctamente una vez, el navegador la recuerda (guardada
+de forma no legible, nunca en texto plano) y no la vuelve a pedir en ese
+mismo dispositivo/navegador. En iPhone/iPad, Safari a veces borra estos
+datos si pasas más de una semana sin abrir la web; para evitarlo, añade la
+página a la pantalla de inicio (compartir → "Añadir a pantalla de inicio"),
+así Safari la trata como una app y no la borra.
+
 ## Cómo cambiar el horario o añadir un festivo
 
 Todo está en `assets/schedule-data.js`:
