@@ -58,6 +58,11 @@ export const WEEK_SCHEDULE = {
   ],
 };
 
+// Recreo: mismo horario todos los días lectivos (ya existe como hueco entre
+// las clases de las 10:15 y las 11:45 en WEEK_SCHEDULE; esto solo hace que
+// se muestre en la web en vez de dejar un hueco sin explicar).
+export const RECESS = { start: "11:15", end: "11:45" };
+
 // Días con horario especial (una fecha concreta, no una semana normal).
 // onlyFrom: solo se muestran/cuentan las clases que empiecen a esa hora o después.
 export const SCHEDULE_EXCEPTIONS = {

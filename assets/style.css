@@ -238,6 +238,23 @@ main { padding-top: 10px; }
 }
 .class-card.skipped .class-title { text-decoration: line-through; }
 
+.recess-card {
+  border-left-style: dashed;
+  border-left-color: var(--border);
+  background: var(--card-bg-muted);
+  box-shadow: none;
+  padding: 8px 14px;
+}
+.recess-card .class-time { color: var(--text-muted); }
+.recess-card .class-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.recess-card .class-title svg { width: 14px; height: 14px; flex-shrink: 0; }
+
 .class-time {
   flex-shrink: 0;
   display: flex;

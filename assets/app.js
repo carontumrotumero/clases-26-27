@@ -6,6 +6,7 @@ import {
   HOLIDAY_MAP,
   COURSE_START,
   COURSE_END,
+  RECESS,
 } from "./schedule-data.js";
 import {
   isOwn,
@@ -527,7 +528,15 @@ function renderDay(date) {
     classes = classes.filter((c) => timeToMinutes(c.end) > timeToMinutes(exception.onlyFrom));
   }
 
-  if (classes.length === 0) {
+  // El recreo se intercala junto a las clases del día (misma regla que las
+  // clases en días con horario especial: se omite si cae antes de "onlyFrom").
+  let items = classes.map((c) => ({ ...c, kind: "class" }));
+  if (!exception || !exception.onlyFrom || timeToMinutes(RECESS.end) > timeToMinutes(exception.onlyFrom)) {
+    items.push({ ...RECESS, kind: "recess" });
+  }
+  items.sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start));
+
+  if (items.length === 0) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.textContent = "No tienes clases programadas este día.";
@@ -535,16 +544,25 @@ function renderDay(date) {
   } else {
     const list = document.createElement("div");
     list.className = "class-list";
-    classes.forEach((c) => {
+    items.forEach((c) => {
       const card = document.createElement("div");
-      card.className = "class-card";
-      card.style.setProperty("--subject-color", SUBJECT_COLORS[c.subject] || "");
-      card.innerHTML = `
-        <div class="class-time"><span class="start">${c.start}</span><span class="end">${c.end}</span></div>
-        <div class="class-body">
-          <p class="class-title">${c.subject}</p>
-          <p class="class-teacher">${ICONS["user"]}${c.teacher}</p>
-        </div>`;
+      if (c.kind === "recess") {
+        card.className = "class-card recess-card";
+        card.innerHTML = `
+          <div class="class-time"><span class="start">${c.start}</span><span class="end">${c.end}</span></div>
+          <div class="class-body">
+            <p class="class-title">${ICONS["clock"]}Recreo</p>
+          </div>`;
+      } else {
+        card.className = "class-card";
+        card.style.setProperty("--subject-color", SUBJECT_COLORS[c.subject] || "");
+        card.innerHTML = `
+          <div class="class-time"><span class="start">${c.start}</span><span class="end">${c.end}</span></div>
+          <div class="class-body">
+            <p class="class-title">${c.subject}</p>
+            <p class="class-teacher">${ICONS["user"]}${c.teacher}</p>
+          </div>`;
+      }
       list.appendChild(card);
     });
     content.appendChild(list);
