@@ -14,15 +14,12 @@ import {
   fetchAbsences,
   addAbsence,
   deleteAbsence,
-  subscribeAbsences,
   fetchTasks,
   addTask,
   deleteTask,
-  subscribeTasks,
   fetchDayOverrides,
   addDayOverride,
   deleteDayOverride,
-  subscribeDayOverrides,
   calendarFeedUrl,
 } from "./db.js";
 
@@ -180,6 +177,58 @@ function applyOverrideChange(payload) {
   }
 }
 
+// ----------------------------------------------------------------------------
+// Actualización en tiempo real: por qué no usamos "realtime" de Supabase.
+//
+// Se probó directamente (conectando por WebSocket y provocando un cambio):
+// Supabase SÍ acepta la suscripción, pero nunca entrega los cambios a nadie.
+// El motivo es que las políticas RLS que protegen la base de datos exigen la
+// cabecera x-site-key (la contraseña de la web) — y esa cabecera solo viaja
+// en peticiones normales (fetch), nunca en la conexión WebSocket de
+// "realtime". Como la política no puede comprobarla ahí, deniega en
+// silencio y no llega ningún aviso a ningún navegador, sea cual sea la red
+// o el dispositivo. Abrir esa comprobación para el WebSocket dejaría leer
+// la base de datos sin contraseña, así que en vez de eso comprobamos los
+// cambios por peticiones normales (que sí llevan la cabecera) cada pocos
+// segundos — no es un "push" instantáneo, pero se ve el cambio casi al
+// momento sin recargar la página, y no debilita la protección.
+// ----------------------------------------------------------------------------
+const POLL_INTERVAL_MS = 4000;
+let polling = false;
+
+async function refreshFromServer() {
+  if (polling) return; // evita que se acumulen peticiones si la red va lenta
+  polling = true;
+  try {
+    const [absences, tasks, overrides] = await Promise.all([fetchAbsences(), fetchTasks(), fetchDayOverrides()]);
+    const newAbsencesByDate = groupAbsences(absences);
+    const changed =
+      JSON.stringify(newAbsencesByDate) !== JSON.stringify(absencesByDate) ||
+      JSON.stringify(tasks) !== JSON.stringify(tasksList) ||
+      JSON.stringify(overrides) !== JSON.stringify(dayOverridesList);
+    if (!changed) return;
+
+    absencesByDate = newAbsencesByDate;
+    tasksList = tasks;
+    dayOverridesList = overrides;
+
+    // Si alguien tiene abierto el formulario de "Avisar que no voy" del día
+    // actual, no reconstruimos ese bloque para no borrarle lo que está
+    // escribiendo — se actualizará solo en el próximo ciclo tras cerrarlo.
+    const openAbsenceForm = document.querySelector(".absence-section form:not([hidden])");
+    if (openAbsenceForm) {
+      renderTasks();
+    } else {
+      render();
+    }
+    renderOverrides();
+  } catch {
+    /* si falla un ciclo, se reintenta en el siguiente */
+  } finally {
+    polling = false;
+  }
+}
+
 async function loadAndSubscribe() {
   const [absences, tasks, overrides] = await Promise.all([fetchAbsences(), fetchTasks(), fetchDayOverrides()]);
   absencesByDate = groupAbsences(absences);
@@ -188,18 +237,9 @@ async function loadAndSubscribe() {
   render();
   renderOverrides();
 
-  subscribeAbsences((payload) => {
-    applyAbsenceChange(payload);
-    render();
-  });
-  subscribeTasks((payload) => {
-    applyTaskChange(payload);
-    renderTasks();
-  });
-  subscribeDayOverrides((payload) => {
-    applyOverrideChange(payload);
-    render();
-    renderOverrides();
+  setInterval(refreshFromServer, POLL_INTERVAL_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshFromServer();
   });
 
   if (localStorage.getItem(LS_NOTIF_PREF) === "on") scheduleTodayReminders();

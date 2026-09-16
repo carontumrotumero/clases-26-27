@@ -1,6 +1,6 @@
 // ============================================================================
-// Conexión a Supabase — base de datos en tiempo real compartida por toda la
-// clase (avisos de falta y tareas a entregar). La URL y la clave "anon" son
+// Conexión a Supabase — base de datos compartida por toda la clase (avisos de
+// falta, tareas a entregar, huelgas/festivos). La URL y la clave "anon" son
 // públicas por diseño (cualquier web que use Supabase las expone), pero la
 // base de datos en sí NO se puede leer ni escribir sin la contraseña de la
 // web: cada petición debe llevar una cabecera x-site-key derivada de esa
@@ -8,6 +8,14 @@
 // Supabase — nunca en este repositorio. Además, solo quien creó una fila
 // puede borrarla (cabecera x-owner-token, un identificador propio del
 // navegador, no la contraseña).
+//
+// Nota sobre "tiempo real": esta protección tiene un efecto secundario —
+// Supabase Realtime (postgres_changes por WebSocket) no puede comprobar la
+// cabecera x-site-key ahí, así que la política RLS lo bloquea siempre y
+// nunca entrega ningún cambio a nadie (comprobado directamente). Por eso
+// app.js no usa canales de "realtime": en su lugar vuelve a llamar a estas
+// mismas funciones de fetch cada pocos segundos (sondeo), que sí llevan la
+// cabecera y sí funcionan.
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -110,13 +118,6 @@ export async function deleteAbsence(id) {
   return !error;
 }
 
-export function subscribeAbsences(onChange) {
-  return client()
-    .channel("absences-changes")
-    .on("postgres_changes", { event: "*", schema: "public", table: "absences" }, onChange)
-    .subscribe();
-}
-
 // ---------------------------------------------------------------------------
 // Tareas a entregar
 // ---------------------------------------------------------------------------
@@ -157,13 +158,6 @@ export async function deleteTask(id) {
   return !error;
 }
 
-export function subscribeTasks(onChange) {
-  return client()
-    .channel("tasks-changes")
-    .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, onChange)
-    .subscribe();
-}
-
 // ---------------------------------------------------------------------------
 // Avisos para toda la clase (huelgas, festivos locales, traspasos de festivo)
 // kind: "closed" -> ese día no hay clase (aunque el calendario oficial diga
@@ -200,11 +194,4 @@ export async function deleteDayOverride(id) {
   const { error } = await client().from("day_overrides").delete().eq("id", id);
   if (error) console.error("deleteDayOverride", error);
   return !error;
-}
-
-export function subscribeDayOverrides(onChange) {
-  return client()
-    .channel("day-overrides-changes")
-    .on("postgres_changes", { event: "*", schema: "public", table: "day_overrides" }, onChange)
-    .subscribe();
 }
