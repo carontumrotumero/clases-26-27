@@ -195,3 +195,46 @@ export async function deleteDayOverride(id) {
   if (error) console.error("deleteDayOverride", error);
   return !error;
 }
+
+// ---------------------------------------------------------------------------
+// Exámenes y exposiciones. Se asocian a una asignatura (no a una hora
+// concreta): la web busca sola en qué clase de ese día es esa asignatura y
+// lo muestra ahí.
+// ---------------------------------------------------------------------------
+export async function fetchExams() {
+  const { data, error } = await client()
+    .from("exams")
+    .select("id, date, subject, kind, notes_link, created_by, owner_token, created_at")
+    .order("date", { ascending: true });
+  if (error) {
+    console.error("fetchExams", error);
+    return [];
+  }
+  return data;
+}
+
+export async function addExam(date, subject, kind, notesLink, createdBy) {
+  const { data, error } = await client()
+    .from("exams")
+    .insert({
+      date,
+      subject,
+      kind,
+      notes_link: notesLink || null,
+      created_by: createdBy || null,
+      owner_token: ownerToken,
+    })
+    .select()
+    .single();
+  if (error) {
+    console.error("addExam", error);
+    return null;
+  }
+  return data;
+}
+
+export async function deleteExam(id) {
+  const { error } = await client().from("exams").delete().eq("id", id);
+  if (error) console.error("deleteExam", error);
+  return !error;
+}

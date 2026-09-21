@@ -8,6 +8,7 @@ import {
   COURSE_END,
   RECESS,
 } from "./schedule-data.js";
+import { STUDENT_NAMES } from "./roster.js";
 import {
   isOwn,
   computeSiteKey,
@@ -21,6 +22,9 @@ import {
   fetchDayOverrides,
   addDayOverride,
   deleteDayOverride,
+  fetchExams,
+  addExam,
+  deleteExam,
   calendarFeedUrl,
 } from "./db.js";
 
@@ -114,6 +118,7 @@ let notifiedKeys = loadSet(LS_NOTIFIED_KEYS);
 let absencesByDate = {}; // { "2026-09-21": [ {id, student_name, reason, owner_token, ...}, ... ] }
 let tasksList = [];
 let dayOverridesList = []; // avisos de huelgas/festivos locales/traspasos (ver buildEffectiveHoliday)
+let examsList = []; // exámenes/exposiciones avisados por la clase
 
 // Combina el calendario oficial (HOLIDAY_MAP) con los avisos que ha puesto la
 // clase: "closed" añade un día sin clase que no estaba en el calendario
@@ -178,6 +183,17 @@ function applyOverrideChange(payload) {
   }
 }
 
+function applyExamChange(payload) {
+  if (payload.eventType === "INSERT") {
+    if (!examsList.some((x) => x.id === payload.new.id)) examsList.push(payload.new);
+  } else if (payload.eventType === "DELETE") {
+    examsList = examsList.filter((x) => x.id !== payload.old.id);
+  } else if (payload.eventType === "UPDATE") {
+    const idx = examsList.findIndex((x) => x.id === payload.new.id);
+    if (idx >= 0) examsList[idx] = payload.new;
+  }
+}
+
 // ----------------------------------------------------------------------------
 // Actualización en tiempo real: por qué no usamos "realtime" de Supabase.
 //
@@ -201,17 +217,24 @@ async function refreshFromServer() {
   if (polling) return; // evita que se acumulen peticiones si la red va lenta
   polling = true;
   try {
-    const [absences, tasks, overrides] = await Promise.all([fetchAbsences(), fetchTasks(), fetchDayOverrides()]);
+    const [absences, tasks, overrides, exams] = await Promise.all([
+      fetchAbsences(),
+      fetchTasks(),
+      fetchDayOverrides(),
+      fetchExams(),
+    ]);
     const newAbsencesByDate = groupAbsences(absences);
     const changed =
       JSON.stringify(newAbsencesByDate) !== JSON.stringify(absencesByDate) ||
       JSON.stringify(tasks) !== JSON.stringify(tasksList) ||
-      JSON.stringify(overrides) !== JSON.stringify(dayOverridesList);
+      JSON.stringify(overrides) !== JSON.stringify(dayOverridesList) ||
+      JSON.stringify(exams) !== JSON.stringify(examsList);
     if (!changed) return;
 
     absencesByDate = newAbsencesByDate;
     tasksList = tasks;
     dayOverridesList = overrides;
+    examsList = exams;
 
     // Si alguien tiene abierto el formulario de "Avisar que no voy" del día
     // actual, no reconstruimos ese bloque para no borrarle lo que está
@@ -223,6 +246,8 @@ async function refreshFromServer() {
       render();
     }
     renderOverrides();
+    renderExams();
+    if (localStorage.getItem(LS_NOTIF_PREF) === "on") scheduleTodayReminders();
   } catch {
     /* si falla un ciclo, se reintenta en el siguiente */
   } finally {
@@ -231,12 +256,23 @@ async function refreshFromServer() {
 }
 
 async function loadAndSubscribe() {
-  const [absences, tasks, overrides] = await Promise.all([fetchAbsences(), fetchTasks(), fetchDayOverrides()]);
+  const [absences, tasks, overrides, exams] = await Promise.all([
+    fetchAbsences(),
+    fetchTasks(),
+    fetchDayOverrides(),
+    fetchExams(),
+  ]);
   absencesByDate = groupAbsences(absences);
   tasksList = tasks;
   dayOverridesList = overrides;
+  examsList = exams;
   render();
   renderOverrides();
+  renderExams();
+
+  document.getElementById("subjectList").innerHTML = Object.keys(SUBJECT_COLORS)
+    .map((s) => `<option value="${escapeHtml(s)}"></option>`)
+    .join("");
 
   setInterval(refreshFromServer, POLL_INTERVAL_MS);
   document.addEventListener("visibilitychange", () => {
@@ -287,6 +323,23 @@ applyTheme(currentTheme());
 document.getElementById("themeBtn").addEventListener("click", cycleTheme);
 document.getElementById("brandIcon").innerHTML = ICONS["book-open"];
 document.getElementById("tasksIcon").innerHTML = ICONS["bookmark2"];
+
+// ----------------------------------------------------------------------------
+// Botón de "quién eres" en la cabecera — reabre la pantalla de nombre para
+// poder cambiarlo sin tener que borrar datos del navegador.
+// ----------------------------------------------------------------------------
+function renderUserBtn() {
+  const btn = document.getElementById("userBtn");
+  btn.innerHTML = ICONS["user"];
+  btn.title = getStudentName() ? `Eres: ${getStudentName()} (toca para cambiar)` : "Elige tu nombre";
+}
+document.getElementById("userBtn").addEventListener("click", () => {
+  showNameScreen((name) => {
+    renderUserBtn();
+    showToast(`Ahora eres ${name}`);
+  });
+});
+renderUserBtn();
 
 // ----------------------------------------------------------------------------
 // Notificaciones del navegador
@@ -354,39 +407,76 @@ document.getElementById("notifBtn").addEventListener("click", requestNotifPermis
 renderNotifIcon();
 
 // Programa un aviso ~10 min antes de cada clase de HOY (si no has avisado que
-// faltas), mientras la pestaña siga abierta. Las notificaciones reales tras
-// cerrar el navegador requerirían un servidor push, que esta web estática no
-// tiene.
+// faltas), mientras la pestaña siga abierta, mencionando si en esa clase hay
+// examen o exposición. Las notificaciones reales tras cerrar el navegador
+// requerirían un servidor push, que esta web estática no tiene.
+//
+// También programa avisos de tareas a entregar 1h, 30min y 15min antes de la
+// hora límite. Como scheduleTodayReminders() se puede volver a llamar varias
+// veces (al añadir una tarea/examen nuevo, o tras cada ciclo de sondeo), se
+// usa un Set en memoria (scheduledKeys, no persistente) para no programar el
+// mismo setTimeout dos veces — es distinto de notifiedKeys, que sí se guarda
+// y evita volver a notificar algo que ya sonó en una visita anterior.
 const REMINDER_LEAD_MIN = 10;
+const TASK_REMINDER_LEADS_MIN = [60, 30, 15];
+let scheduledKeys = new Set();
+
+function examForClass(iso, subject) {
+  return examsList.find((x) => x.date === iso && x.subject === subject);
+}
+
 function scheduleTodayReminders() {
   if (!notifSupported() || Notification.permission !== "granted") return;
   const now = new Date();
   const iso = toISO(now);
-  if (effectiveHoliday(iso).holiday || iso < COURSE_START || iso > COURSE_END) return;
-  const weekday = now.getDay();
-  if (weekday === 0 || weekday === 6) return;
-  const iAmOut = (absencesByDate[iso] || []).some((a) => isOwn(a));
-  if (iAmOut) return;
-
-  const exception = SCHEDULE_EXCEPTIONS[iso];
-  const classes = (WEEK_SCHEDULE[weekday] || []).filter((c) => {
-    if (exception && exception.onlyFrom) return timeToMinutes(c.end) > timeToMinutes(exception.onlyFrom);
-    return true;
-  });
-
   const nowMin = now.getHours() * 60 + now.getMinutes();
-  classes.forEach((c) => {
-    const key = `${iso}-${c.start}`;
-    if (notifiedKeys.has(key)) return;
-    const startMin = timeToMinutes(c.start);
-    const fireMin = startMin - REMINDER_LEAD_MIN;
-    const delay = (fireMin - nowMin) * 60 * 1000;
-    if (delay <= 0 || delay > 1000 * 60 * 60 * 12) return; // ya pasó o demasiado lejos
-    setTimeout(() => {
-      notify(`📚 ${c.subject} en ${REMINDER_LEAD_MIN} min`, `${c.start}–${c.end} · ${c.teacher}`);
-      notifiedKeys.add(key);
-      saveSet(LS_NOTIFIED_KEYS, notifiedKeys);
-    }, delay);
+
+  if (!effectiveHoliday(iso).holiday && iso >= COURSE_START && iso <= COURSE_END) {
+    const weekday = now.getDay();
+    const iAmOut = (absencesByDate[iso] || []).some((a) => isOwn(a));
+    if (weekday !== 0 && weekday !== 6 && !iAmOut) {
+      const exception = SCHEDULE_EXCEPTIONS[iso];
+      const classes = (WEEK_SCHEDULE[weekday] || []).filter((c) => {
+        if (exception && exception.onlyFrom) return timeToMinutes(c.end) > timeToMinutes(exception.onlyFrom);
+        return true;
+      });
+
+      classes.forEach((c) => {
+        const key = `${iso}-${c.start}`;
+        if (notifiedKeys.has(key) || scheduledKeys.has(key)) return;
+        const startMin = timeToMinutes(c.start);
+        const fireMin = startMin - REMINDER_LEAD_MIN;
+        const delay = (fireMin - nowMin) * 60 * 1000;
+        if (delay <= 0 || delay > 1000 * 60 * 60 * 12) return; // ya pasó o demasiado lejos
+        scheduledKeys.add(key);
+        setTimeout(() => {
+          const exam = examForClass(iso, c.subject);
+          const examNote = exam ? ` · ${exam.kind === "exam" ? "Examen" : "Exposición"} hoy` : "";
+          notify(`📚 ${c.subject} en ${REMINDER_LEAD_MIN} min${examNote}`, `${c.start}–${c.end} · ${c.teacher}`);
+          notifiedKeys.add(key);
+          saveSet(LS_NOTIFIED_KEYS, notifiedKeys);
+        }, delay);
+      });
+    }
+  }
+
+  // Avisos de tareas a entregar (1h, 30min, 15min antes de la hora límite).
+  tasksList.forEach((task) => {
+    const dueMs = new Date(task.due).getTime();
+    if (Number.isNaN(dueMs)) return;
+    TASK_REMINDER_LEADS_MIN.forEach((leadMin) => {
+      const key = `task-${task.id}-${leadMin}`;
+      if (notifiedKeys.has(key) || scheduledKeys.has(key)) return;
+      const delay = dueMs - leadMin * 60 * 1000 - Date.now();
+      if (delay <= 0 || delay > 1000 * 60 * 60 * 12) return; // ya pasó o demasiado lejos
+      scheduledKeys.add(key);
+      setTimeout(() => {
+        const leadLabel = leadMin >= 60 ? `${leadMin / 60}h` : `${leadMin}min`;
+        notify(`⏰ ${task.title} en ${leadLabel}`, `${task.subject} · entrega a las ${new Date(task.due).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}`);
+        notifiedKeys.add(key);
+        saveSet(LS_NOTIFIED_KEYS, notifiedKeys);
+      }, delay);
+    });
   });
 }
 
@@ -556,11 +646,20 @@ function renderDay(date) {
       } else {
         card.className = "class-card";
         card.style.setProperty("--subject-color", SUBJECT_COLORS[c.subject] || "");
+        const examMatch = examsList.find((x) => x.date === iso && x.subject === c.subject);
+        const examBadge = examMatch
+          ? `<p class="class-exam-badge ${examMatch.kind === "exam" ? "is-exam" : "is-expo"}">${
+              examMatch.kind === "exam" ? ICONS["alert-triangle"] : ICONS["bookmark2"]
+            }${examMatch.kind === "exam" ? "Examen" : "Exposición"}${
+              examMatch.notes_link ? ` · <a href="${escapeHtml(sanitizeUrl(examMatch.notes_link) || "#")}" target="_blank" rel="noopener">enlace</a>` : ""
+            }</p>`
+          : "";
         card.innerHTML = `
           <div class="class-time"><span class="start">${c.start}</span><span class="end">${c.end}</span></div>
           <div class="class-body">
             <p class="class-title">${c.subject}</p>
             <p class="class-teacher">${ICONS["user"]}${c.teacher}</p>
+            ${examBadge}
           </div>`;
       }
       list.appendChild(card);
@@ -626,7 +725,7 @@ function buildAbsenceSection(iso) {
   form.className = "inline-form";
   form.hidden = true;
   form.innerHTML = `
-    <input type="text" name="name" placeholder="Tu nombre" required maxlength="60" />
+    <input type="text" name="name" placeholder="Tu nombre" required maxlength="60" value="${escapeHtml(getStudentName())}" />
     <input type="text" name="reason" placeholder="Motivo (opcional)" maxlength="140" />
     <div class="inline-form-actions">
       <button type="button" class="btn" data-cancel>Cancelar</button>
@@ -639,7 +738,10 @@ function buildAbsenceSection(iso) {
   toggleBtn.innerHTML = `${ICONS["x-circle"]} Avisar que no voy`;
   toggleBtn.addEventListener("click", () => {
     form.hidden = !form.hidden;
-    if (!form.hidden) form.querySelector('input[name="name"]').focus();
+    if (!form.hidden) {
+      const target = getStudentName() ? form.querySelector('input[name="reason"]') : form.querySelector('input[name="name"]');
+      target.focus();
+    }
   });
   section.appendChild(toggleBtn);
 
@@ -834,6 +936,103 @@ noticeForm.addEventListener("submit", async (e) => {
 });
 
 // ----------------------------------------------------------------------------
+// Exámenes y exposiciones — se avisan por asignatura y fecha (no por hora):
+// la web busca sola en qué clase de ese día es esa asignatura y lo muestra
+// ahí (ver renderDay). En tiempo real y compartidos, igual que lo demás.
+// ----------------------------------------------------------------------------
+document.getElementById("examsIcon").innerHTML = ICONS["bookmark2"];
+
+function renderExams() {
+  const listEl = document.getElementById("examList");
+  if (!listEl) return;
+  listEl.innerHTML = "";
+
+  const upcoming = examsList
+    .filter((x) => x.date >= toISO(new Date()))
+    .slice()
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+  if (upcoming.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "Nadie ha avisado de exámenes ni exposiciones todavía.";
+    listEl.appendChild(empty);
+    return;
+  }
+
+  upcoming.forEach((x) => {
+    const item = document.createElement("div");
+    item.className = "absence-item";
+    const safeLink = sanitizeUrl(x.notes_link);
+    item.innerHTML = `
+      <div class="absence-avatar">${x.kind === "exam" ? ICONS["alert-triangle"] : ICONS["bookmark2"]}</div>
+      <div class="absence-info">
+        <p class="absence-name">${fmtNoticeDate(x.date)} · ${escapeHtml(x.subject)} · ${x.kind === "exam" ? "Examen" : "Exposición"}</p>
+        ${x.created_by ? `<p class="absence-reason">Avisado por ${escapeHtml(x.created_by)}</p>` : ""}
+        ${safeLink ? `<p class="absence-reason"><a href="${safeLink}" target="_blank" rel="noopener">Apuntes / dónde entregarlo</a></p>` : ""}
+      </div>`;
+    if (isOwn(x)) {
+      const delBtn = document.createElement("button");
+      delBtn.className = "absence-del";
+      delBtn.title = "Borrar aviso";
+      delBtn.innerHTML = ICONS["x"];
+      delBtn.addEventListener("click", async () => {
+        delBtn.disabled = true;
+        const ok = await deleteExam(x.id);
+        if (ok) {
+          applyExamChange({ eventType: "DELETE", old: x });
+          render();
+          renderExams();
+        } else {
+          delBtn.disabled = false;
+          showToast("No se pudo borrar, prueba de nuevo");
+        }
+      });
+      item.appendChild(delBtn);
+    }
+    listEl.appendChild(item);
+  });
+}
+
+const addExamBtn = document.getElementById("addExamBtn");
+const examForm = document.getElementById("examForm");
+addExamBtn.textContent = "+";
+addExamBtn.style.fontSize = "20px";
+addExamBtn.style.fontWeight = "700";
+addExamBtn.title = "Añadir examen o exposición";
+
+addExamBtn.addEventListener("click", () => {
+  examForm.hidden = !examForm.hidden;
+  if (!examForm.hidden) document.getElementById("examDate").focus();
+});
+document.getElementById("examCancelBtn").addEventListener("click", () => {
+  examForm.hidden = true;
+  examForm.reset();
+});
+examForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const date = document.getElementById("examDate").value;
+  const subject = document.getElementById("examSubject").value.trim();
+  const kind = document.getElementById("examKind").value;
+  const link = document.getElementById("examLink").value.trim();
+  if (!date || !subject || !kind) return;
+  const submitBtn = examForm.querySelector('button[type="submit"]');
+  submitBtn.disabled = true;
+  const row = await addExam(date, subject, kind, link, getStudentName());
+  submitBtn.disabled = false;
+  if (row) {
+    applyExamChange({ eventType: "INSERT", new: row });
+    render();
+    renderExams();
+    if (localStorage.getItem(LS_NOTIF_PREF) === "on") scheduleTodayReminders();
+    examForm.reset();
+    examForm.hidden = true;
+  } else {
+    showToast("No se pudo avisar del examen, prueba de nuevo");
+  }
+});
+
+// ----------------------------------------------------------------------------
 // Sincronizar con Google Calendar / Calendario de iCloud-Apple (enlace .ics
 // suscribible — ver assets/db.js y supabase/functions/calendar-feed).
 // ----------------------------------------------------------------------------
@@ -896,6 +1095,7 @@ taskForm.addEventListener("submit", async (e) => {
   if (row) {
     applyTaskChange({ eventType: "INSERT", new: row });
     renderTasks();
+    if (localStorage.getItem(LS_NOTIF_PREF) === "on") scheduleTodayReminders();
     taskForm.reset();
     taskForm.hidden = true;
   } else {
@@ -936,6 +1136,7 @@ loadAndSubscribe();
 const LS_UNLOCKED = "horario:unlocked";
 const LS_SITEKEY = "horario:siteKey";
 const LS_ATTEMPTS = "horario:lockAttempts";
+const LS_STUDENT_NAME = "horario:studentName";
 const PASSWORD_HASH = "18ee924cb67c6f6550c06fe2fa14a2e427d2c239c55c19d89de5cd5ffaa59030";
 
 async function sha256Hex(text) {
@@ -948,11 +1149,78 @@ function isUnlocked() {
   return localStorage.getItem(LS_UNLOCKED) === "1" && !!localStorage.getItem(LS_SITEKEY);
 }
 
+function getStudentName() {
+  return localStorage.getItem(LS_STUDENT_NAME) || "";
+}
+
+// ----------------------------------------------------------------------------
+// "Quién eres": se elige una vez de la lista de clase y se usa después para
+// no tener que escribir el nombre en cada aviso de falta, tarea o examen.
+// El botón de la cabecera (una vez dentro de la app) reabre esta misma
+// pantalla para poder cambiarlo.
+// ----------------------------------------------------------------------------
+function populateNameSelect() {
+  const select = document.getElementById("nameSelect");
+  const existing = new Set([...select.options].map((o) => o.value));
+  STUDENT_NAMES.forEach((name) => {
+    if (existing.has(name)) return;
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    select.appendChild(opt);
+  });
+  if (![...select.options].some((o) => o.value === "__other__")) {
+    const other = document.createElement("option");
+    other.value = "__other__";
+    other.textContent = "Mi nombre no está en la lista";
+    select.appendChild(other);
+  }
+}
+
+function showNameScreen(onDone) {
+  const screen = document.getElementById("nameScreen");
+  const nameIconEl = document.getElementById("nameIcon");
+  if (nameIconEl && !nameIconEl.innerHTML) nameIconEl.innerHTML = ICONS["user"];
+  populateNameSelect();
+
+  const select = document.getElementById("nameSelect");
+  const otherInput = document.getElementById("nameOther");
+  const form = document.getElementById("nameForm");
+  select.value = "";
+  otherInput.hidden = true;
+  otherInput.value = "";
+
+  select.onchange = () => {
+    otherInput.hidden = select.value !== "__other__";
+    if (!otherInput.hidden) otherInput.focus();
+  };
+
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const name = select.value === "__other__" ? otherInput.value.trim() : select.value;
+    if (!name) return;
+    localStorage.setItem(LS_STUDENT_NAME, name);
+    screen.hidden = true;
+    onDone(name);
+  };
+
+  screen.hidden = false;
+}
+
 function showApp() {
   configureDb(localStorage.getItem(LS_SITEKEY));
   document.getElementById("lockScreen").hidden = true;
   document.getElementById("app").hidden = false;
   boot();
+}
+
+function proceedAfterPassword() {
+  if (getStudentName()) {
+    showApp();
+  } else {
+    document.getElementById("lockScreen").hidden = true;
+    showNameScreen(() => showApp());
+  }
 }
 
 // Freno sencillo: cada fallo espera un poco más antes de dejar volver a
@@ -970,7 +1238,7 @@ function initLock() {
   if (lockIconEl) lockIconEl.innerHTML = ICONS["lock-keyhole"];
 
   if (isUnlocked()) {
-    showApp();
+    proceedAfterPassword();
     return;
   }
 
@@ -1000,7 +1268,7 @@ function initLock() {
       const siteKey = await computeSiteKey(input.value);
       localStorage.setItem(LS_UNLOCKED, "1");
       localStorage.setItem(LS_SITEKEY, siteKey);
-      showApp();
+      proceedAfterPassword();
     } else {
       localStorage.setItem(LS_ATTEMPTS, String(getAttempts() + 1));
       error.hidden = false;

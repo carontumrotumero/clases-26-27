@@ -25,6 +25,21 @@
     </div>
   </div>
 
+  <div id="nameScreen" class="lock-screen" hidden>
+    <div class="lock-card">
+      <div class="lock-icon" id="nameIcon"></div>
+      <h1>¿Quién eres?</h1>
+      <p>Elige tu nombre de la lista de clase para que tus avisos, tareas y exámenes lleven tu nombre sin tener que escribirlo cada vez.</p>
+      <form id="nameForm" autocomplete="off">
+        <select id="nameSelect" required>
+          <option value="" disabled selected>Selecciona tu nombre</option>
+        </select>
+        <input type="text" id="nameOther" placeholder="Escribe tu nombre" maxlength="60" hidden />
+        <button type="submit" class="btn primary">Continuar</button>
+      </form>
+    </div>
+  </div>
+
   <div id="app" hidden>
   <header class="top">
     <div class="top-row">
@@ -33,6 +48,7 @@
         <span>Mi Horario</span>
       </div>
       <div class="header-actions">
+        <button class="icon-btn" id="userBtn" title="Cambiar tu nombre" aria-label="Cambiar tu nombre"></button>
         <button class="icon-btn" id="notifBtn" title="Notificaciones" aria-label="Notificaciones"></button>
         <button class="icon-btn" id="themeBtn" title="Cambiar tema" aria-label="Cambiar tema"></button>
       </div>
@@ -65,6 +81,27 @@
         </div>
       </form>
       <div id="noticeList"></div>
+    </section>
+
+    <section class="exams">
+      <div class="section-heading-row">
+        <h2 class="section-heading"><span id="examsIcon"></span>Exámenes y exposiciones</h2>
+        <button class="icon-btn" id="addExamBtn" title="Añadir examen o exposición" aria-label="Añadir examen o exposición"></button>
+      </div>
+      <form id="examForm" class="inline-form" hidden>
+        <input type="date" id="examDate" required />
+        <input type="text" id="examSubject" placeholder="Asignatura" list="subjectList" required />
+        <select id="examKind" required>
+          <option value="exam">Examen</option>
+          <option value="expo">Exposición</option>
+        </select>
+        <input type="url" id="examLink" placeholder="Enlace de apuntes o dónde entregarlo (opcional)" />
+        <div class="inline-form-actions">
+          <button type="button" class="btn" id="examCancelBtn">Cancelar</button>
+          <button type="submit" class="btn primary">Avisar a la clase</button>
+        </div>
+      </form>
+      <div id="examList"></div>
     </section>
 
     <main id="dayContent"></main>

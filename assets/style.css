@@ -326,7 +326,11 @@ section.calendar-sync {
 section.class-notices {
   margin-bottom: 22px;
 }
-section.class-notices .inline-form select {
+section.exams {
+  margin-bottom: 22px;
+}
+section.class-notices .inline-form select,
+section.exams .inline-form select {
   width: 100%;
   padding: 10px 12px;
   border-radius: 9px;
@@ -335,6 +339,21 @@ section.class-notices .inline-form select {
   color: var(--text);
   font-size: 13.5px;
 }
+.class-exam-badge {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 650;
+  margin: 6px 0 0;
+  padding: 4px 8px;
+  border-radius: 7px;
+  width: fit-content;
+}
+.class-exam-badge svg { width: 13px; height: 13px; flex-shrink: 0; }
+.class-exam-badge a { color: inherit; text-decoration: underline; }
+.class-exam-badge.is-exam { background: var(--danger-bg); color: var(--danger); }
+.class-exam-badge.is-expo { background: var(--card-bg-muted); color: var(--accent); }
 .sync-panel {
   background: var(--card-bg);
   border: 1px solid var(--border);
@@ -556,6 +575,21 @@ section.class-notices .inline-form select {
   font-size: 12.5px;
   margin: 12px 0 0 !important;
 }
+
+#nameForm { display: flex; flex-direction: column; gap: 10px; }
+#nameForm select,
+#nameForm input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 11px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+  text-align: center;
+}
+#nameForm select:focus,
+#nameForm input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 footer.credits {
   text-align: center;
