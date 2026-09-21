@@ -35,6 +35,10 @@
           <option value="" disabled selected>Selecciona tu nombre</option>
         </select>
         <input type="text" id="nameOther" placeholder="Escribe tu nombre" maxlength="60" hidden />
+        <p class="name-pin-hint" id="namePinHint" hidden></p>
+        <input type="password" inputmode="numeric" pattern="[0-9]*" id="namePin" placeholder="PIN de 4 dígitos" maxlength="4" hidden />
+        <input type="password" inputmode="numeric" pattern="[0-9]*" id="namePinConfirm" placeholder="Repite el PIN" maxlength="4" hidden />
+        <p class="name-pin-error" id="namePinError" hidden></p>
         <button type="submit" class="btn primary">Continuar</button>
       </form>
     </div>

@@ -26,6 +26,10 @@ import {
   addExam,
   deleteExam,
   calendarFeedUrl,
+  setCurrentSiteKey,
+  checkNameClaimed,
+  claimName,
+  loginName,
 } from "./db.js";
 
 function boot() {
@@ -1177,31 +1181,141 @@ function populateNameSelect() {
   }
 }
 
+// El PIN evita que alguien elija el nombre de otro compañero: la primera vez
+// que se usa un nombre hay que crear un PIN de 4 dígitos (se guarda con
+// hash en Supabase, ver assets/db.js y supabase/functions/student-auth); las
+// siguientes veces que se use ese nombre (desde este navegador u otro) hace
+// falta ese mismo PIN. Los nombres de la lista y los escritos a mano ("mi
+// nombre no está en la lista") funcionan igual.
 function showNameScreen(onDone) {
   const screen = document.getElementById("nameScreen");
   const nameIconEl = document.getElementById("nameIcon");
   if (nameIconEl && !nameIconEl.innerHTML) nameIconEl.innerHTML = ICONS["user"];
   populateNameSelect();
+  setCurrentSiteKey(localStorage.getItem(LS_SITEKEY));
 
   const select = document.getElementById("nameSelect");
   const otherInput = document.getElementById("nameOther");
   const form = document.getElementById("nameForm");
+  const pinHint = document.getElementById("namePinHint");
+  const pinInput = document.getElementById("namePin");
+  const pinConfirmInput = document.getElementById("namePinConfirm");
+  const pinError = document.getElementById("namePinError");
+  const submitBtn = form.querySelector('button[type="submit"]');
+
   select.value = "";
   otherInput.hidden = true;
   otherInput.value = "";
+  pinHint.hidden = true;
+  pinInput.hidden = true;
+  pinInput.value = "";
+  pinConfirmInput.hidden = true;
+  pinConfirmInput.value = "";
+  pinError.hidden = true;
+
+  let claimedState = null; // null = aún sin comprobar, true = ya tiene PIN, false = nombre nuevo
+  let checkToken = 0;
+
+  async function refreshPinUI(name) {
+    pinError.hidden = true;
+    if (!name) {
+      claimedState = null;
+      pinHint.hidden = true;
+      pinInput.hidden = true;
+      pinConfirmInput.hidden = true;
+      return;
+    }
+    const myToken = ++checkToken;
+    pinHint.hidden = false;
+    pinHint.textContent = "Comprobando…";
+    pinInput.hidden = true;
+    pinConfirmInput.hidden = true;
+    const res = await checkNameClaimed(name);
+    if (myToken !== checkToken) return; // el nombre cambió mientras comprobábamos
+    claimedState = !!res.claimed;
+    pinInput.hidden = false;
+    pinInput.value = "";
+    if (claimedState) {
+      pinHint.textContent = "Ese nombre ya tiene PIN. Escribe tu PIN para continuar.";
+      pinConfirmInput.hidden = true;
+    } else {
+      pinHint.textContent = "Es la primera vez que se usa ese nombre: crea un PIN de 4 dígitos para que solo tú puedas volver a usarlo.";
+      pinConfirmInput.hidden = false;
+      pinConfirmInput.value = "";
+    }
+  }
 
   select.onchange = () => {
     otherInput.hidden = select.value !== "__other__";
-    if (!otherInput.hidden) otherInput.focus();
+    if (!otherInput.hidden) {
+      otherInput.focus();
+      refreshPinUI("");
+    } else {
+      refreshPinUI(select.value);
+    }
   };
 
-  form.onsubmit = (e) => {
+  let otherDebounce = null;
+  otherInput.oninput = () => {
+    clearTimeout(otherDebounce);
+    const name = otherInput.value.trim();
+    otherDebounce = setTimeout(() => refreshPinUI(name), 400);
+  };
+
+  form.onsubmit = async (e) => {
     e.preventDefault();
     const name = select.value === "__other__" ? otherInput.value.trim() : select.value;
     if (!name) return;
-    localStorage.setItem(LS_STUDENT_NAME, name);
-    screen.hidden = true;
-    onDone(name);
+    pinError.hidden = true;
+
+    if (claimedState === null) {
+      await refreshPinUI(name);
+    }
+
+    const pin = pinInput.value.trim();
+    if (!/^\d{4}$/.test(pin)) {
+      pinError.hidden = false;
+      pinError.textContent = "El PIN son 4 números.";
+      return;
+    }
+
+    submitBtn.disabled = true;
+    let result;
+    if (claimedState) {
+      result = await loginName(name, pin);
+    } else {
+      const confirmPin = pinConfirmInput.value.trim();
+      if (pin !== confirmPin) {
+        submitBtn.disabled = false;
+        pinError.hidden = false;
+        pinError.textContent = "Los dos PIN no coinciden.";
+        return;
+      }
+      result = await claimName(name, pin);
+    }
+    submitBtn.disabled = false;
+
+    if (result.ok) {
+      localStorage.setItem(LS_STUDENT_NAME, name);
+      screen.hidden = true;
+      onDone(name);
+      return;
+    }
+
+    pinError.hidden = false;
+    if (result.error === "already_claimed") {
+      pinError.textContent = "Alguien acaba de crear el PIN de ese nombre justo ahora: prueba a escribir el PIN que puso.";
+      await refreshPinUI(name);
+    } else if (result.error === "wrong_pin") {
+      pinError.textContent = `PIN incorrecto${result.attemptsLeft != null ? ` (te quedan ${result.attemptsLeft} intentos)` : ""}.`;
+    } else if (result.error === "locked") {
+      pinError.textContent = "Demasiados intentos fallidos: espera unos minutos antes de volver a probar.";
+    } else if (result.error === "not_claimed") {
+      await refreshPinUI(name);
+      pinError.textContent = "Ese nombre ya no tenía PIN, créalo ahora.";
+    } else {
+      pinError.textContent = "No se pudo comprobar el PIN, prueba de nuevo.";
+    }
   };
 
   screen.hidden = false;

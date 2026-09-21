@@ -68,6 +68,7 @@ export function configureDb(siteKey) {
   supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { "x-owner-token": ownerToken, "x-site-key": siteKey } },
   });
+  currentSiteKey = siteKey;
 }
 
 function client() {
@@ -237,4 +238,41 @@ export async function deleteExam(id) {
   const { error } = await client().from("exams").delete().eq("id", id);
   if (error) console.error("deleteExam", error);
   return !error;
+}
+
+// ---------------------------------------------------------------------------
+// Reserva de nombre + PIN — evita que alguien elija el nombre de otro
+// compañero. Se resuelve en una Edge Function (no en una tabla con RLS
+// normal) porque el hash del PIN no debe poder leerse nunca desde el
+// navegador de nadie, ni siquiera con la contraseña de la web puesta — ver
+// supabase/functions/student-auth.
+// ---------------------------------------------------------------------------
+let currentSiteKey = null;
+
+export function setCurrentSiteKey(siteKey) {
+  currentSiteKey = siteKey;
+}
+
+async function callStudentAuth(action, name, pin) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/student-auth`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-site-key": currentSiteKey },
+      body: JSON.stringify({ action, name, pin, ownerToken }),
+    });
+    return await res.json();
+  } catch (err) {
+    console.error("callStudentAuth", err);
+    return { ok: false, error: "network" };
+  }
+}
+
+export function checkNameClaimed(name) {
+  return callStudentAuth("status", name);
+}
+export function claimName(name, pin) {
+  return callStudentAuth("claim", name, pin);
+}
+export function loginName(name, pin) {
+  return callStudentAuth("login", name, pin);
 }
