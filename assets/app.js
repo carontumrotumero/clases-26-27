@@ -792,7 +792,16 @@ function renderTasks() {
   }
 
   const now = new Date();
-  const sorted = [...tasksList].sort((a, b) => new Date(a.due) - new Date(b.due));
+  // Las que aún no han vencido van arriba (la más próxima primero); las
+  // vencidas se mandan abajo (la más recientemente vencida primero).
+  const sorted = [...tasksList].sort((a, b) => {
+    const aOverdue = new Date(a.due) < now;
+    const bOverdue = new Date(b.due) < now;
+    if (aOverdue !== bOverdue) return aOverdue ? 1 : -1;
+    return aOverdue
+      ? new Date(b.due) - new Date(a.due)
+      : new Date(a.due) - new Date(b.due);
+  });
 
   sorted.forEach((task) => {
     const dueDate = new Date(task.due);
